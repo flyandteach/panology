@@ -1,0 +1,32 @@
+[
+  {
+    "topic": "eVTOL certification progress",
+    "category": "AAM / eVTOL",
+    "signal_strength": 4,
+    "time_horizon": "Near term",
+    "confidence": 3,
+    "notes": "Track certification milestones, flight-test evidence, and regulatory filings separately from promotional claims.",
+    "watch_items": "FAA certification phases; type certification basis; conformity aircraft; production certification",
+    "last_updated": "2026-06-12"
+  },
+  {
+    "topic": "Airport electrification and charging infrastructure",
+    "category": "Airport Infrastructure",
+    "signal_strength": 3,
+    "time_horizon": "Near to mid term",
+    "confidence": 4,
+    "notes": "Monitor utility capacity, charging standards, grid constraints, and airport capital planning integration.",
+    "watch_items": "utility studies; charger deployments; battery storage; airport master plans",
+    "last_updated": "2026-06-12"
+  },
+  {
+    "topic": "Drone delivery hub land-use regulation",
+    "category": "Drone Logistics",
+    "signal_strength": 4,
+    "time_horizon": "Near term",
+    "confidence": 4,
+    "notes": "Track local ordinances, setbacks, community opposition, environmental review, and operational scale.",
+    "watch_items": "local zoning cases; hub approvals; noise complaints; state preemption",
+    "last_updated": "2026-06-12"
+  }
+]
