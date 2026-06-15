@@ -385,7 +385,7 @@ def _mock_scenario_analysis() -> str:
 # ---------------------------------------------------------------------------
 
 def _load_template(name: str, fallback: str) -> str:
-    prompts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
+    prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
     path = os.path.join(prompts_dir, f"{name}.md")
     try:
         with open(path, "r", encoding="utf-8") as fh:
