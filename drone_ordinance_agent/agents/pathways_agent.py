@@ -1,6 +1,13 @@
 """
 Approval Pathways Agent.
-Determines the required entitlement process based on tier, density, and state.
+Entitlement process aligned with WSDOT Drone Hub Land Use Guidance v5.3 (June 2026).
+
+Key changes from prior version:
+- Tier 1/2 "Permitted" zones: administrative/ministerial review, no hearing ("lighter review track")
+- Tier 1/2 "Conditional" zones: 300-ft notice radius + public hearing
+- Tier 3: 500-ft notice radius + public hearing; development agreement for major hubs
+- Cannot set aircraft operating hour limits (only ground-based activity)
+- Source: WSDOT v5.3, Section 5 and Table 3
 """
 
 from .base import call_llm, parse_json_response
@@ -14,144 +21,223 @@ def _mock_pathways(inputs: dict, tier: int) -> dict:
     state = inputs.get("state", "the State")
     density = inputs.get("density", "suburban")
     municipality = inputs.get("municipality") or "the Municipality"
+    airport_type = inputs.get("airport_type", "class_g")
+    faa_coord = airport_type in ("class_b", "class_c", "class_d")
 
-    # Core pathway decision logic
+    # Determine primary entitlement based on tier and WSDOT guidance
     if tier == 1:
-        primary_path = "Ministerial / Building Permit"
+        primary_path = "Administrative Site Plan Review (Lighter Review Track) — no public hearing"
         hearing_required = False
-        ceqa_class = "Class 3 Categorical Exemption (New Construction of Small Structures)"
+        notice_radius_ft = 0
+        sepa_track = "Categorical Exemption (WAC 197-11-800, if Washington) or state equivalent; verify with Lead Agency"
         timeline_weeks = "4–8"
-        deposit_range = "$2,000–$8,000"
+        fee_range = "$500–$3,000"
+        dev_agreement = False
     elif tier == 2:
-        primary_path = "Administrative Use Permit (AUP)"
-        hearing_required = False
-        ceqa_class = "Class 3 Categorical Exemption or Initial Study/Mitigated Negative Declaration depending on site conditions"
-        timeline_weeks = "8–16"
-        deposit_range = "$8,000–$25,000"
-    elif tier == 3:
-        primary_path = "Conditional Use Permit (CUP) — Planning Commission"
+        primary_path = "Administrative Site Plan Review (Lighter Review Track) — no public hearing when in Permitted zones; Conditional Use Permit when in Conditional zones"
+        hearing_required = False  # only if in conditional zone
+        notice_radius_ft = config.NOTICE_RADIUS_TIER_1_2_FT
+        sepa_track = "SEPA/CEQA Threshold Determination (Mitigated Determination of Non-Significance likely) or state equivalent"
+        timeline_weeks = "6–14"
+        fee_range = "$2,000–$10,000"
+        dev_agreement = False
+    else:  # tier 3
+        primary_path = "Conditional Use Permit (CUP) or Special Use Permit — Planning Commission or equivalent body"
         hearing_required = True
-        ceqa_class = "Initial Study / Mitigated Negative Declaration (IS/MND) or full EIR if significant unmitigated impacts"
-        timeline_weeks = "16–26"
-        deposit_range = "$25,000–$75,000"
-    else:
-        primary_path = "Specific Plan Amendment or Development Agreement + CUP — City Council"
-        hearing_required = True
-        ceqa_class = "Environmental Impact Report (EIR) required"
-        timeline_weeks = "26–52+"
-        deposit_range = "$75,000–$250,000+"
-
-    faa_coordination = inputs.get("airport_type", "") in ("class_b", "class_c", "class_d")
+        notice_radius_ft = config.NOTICE_RADIUS_TIER_3_FT
+        sepa_track = "SEPA/CEQA Environmental Review required; EIS/EIR if significant unmitigated impacts identified"
+        timeline_weeks = "16–32"
+        fee_range = "$15,000–$75,000+"
+        dev_agreement = True
 
     pathways = [
         {
-            "label": f"Step 1 — Pre-Application Conference",
-            "detail": f"Applicant meets with Planning, Building, and Public Works staff to identify applicable requirements, fee schedules, and potential issues prior to formal submission.",
+            "label": "Step 1 — Pre-Application Conference",
+            "detail": (
+                f"Applicant meets with {municipality} Planning Department staff to identify applicable standards, "
+                "fee schedule, and any potential site or operational issues before formal submission. "
+                "Coordination with WSDOT Aviation Division and any affected airport sponsor is recommended for "
+                "Tier 3 hubs or sites near airports."
+            ),
             "required": True,
             "agency": f"{municipality} Planning Department",
         },
         {
-            "label": f"Step 2 — {primary_path}",
+            "label": "Step 2 — Drone Hub Tier Determination",
             "detail": (
-                f"Primary land use entitlement. "
-                + ("Requires a noticed public hearing before the Planning Commission." if hearing_required else "Administrative review; no public hearing required unless appealed.")
+                "Applicant submits tier determination worksheet identifying dedicated hub area (sq ft), "
+                "number of operators, estimated daily operations, and installed infrastructure (charging, docking, maintenance). "
+                "Planning Director issues written tier determination. Any party may appeal the determination within 10 days."
+            ),
+            "required": True,
+            "agency": f"{municipality} Planning Director",
+        },
+        {
+            "label": f"Step 3 — {primary_path}",
+            "detail": (
+                f"Primary land use entitlement for a Tier {tier} facility. "
+                + (
+                    f"Requires a noticed public hearing. Written notice to property owners within {notice_radius_ft} ft of the proposed operational boundary."
+                    if hearing_required else
+                    "Administrative review; no public hearing required. "
+                    + (f"Written notice to property owners within {notice_radius_ft} ft if located in a Conditional zone." if notice_radius_ft else "")
+                )
+                + f" Estimated processing time: {timeline_weeks} weeks from complete application. Estimated fees: {fee_range}."
             ),
             "required": True,
             "agency": f"{municipality} Planning Commission" if hearing_required else f"{municipality} Planning Director",
-            "timeline": f"Approximately {timeline_weeks} weeks from complete application",
-            "estimated_fees": deposit_range,
+            "notice_radius_ft": notice_radius_ft,
+            "timeline": f"~{timeline_weeks} weeks",
+            "estimated_fees": fee_range,
         },
         {
-            "label": f"Step 3 — CEQA / Environmental Review",
-            "detail": f"{ceqa_class}. Applicant is responsible for preparation of any required environmental document. Third-party peer review may be required at applicant's expense.",
+            "label": "Step 4 — Environmental Review (SEPA/CEQA/NEPA)",
+            "detail": (
+                f"{sepa_track}. Applicant is responsible for preparation of required environmental documents. "
+                "Note: Where the proposed hub involves Part 135 or Part 108 package delivery operations, "
+                "applicant should identify whether the FAA has completed or is preparing NEPA review for the proposed operation, "
+                "and whether any FAA noise analysis identifies setback, intensity, or mitigation assumptions relevant to the site."
+            ),
             "required": True,
             "agency": f"{municipality} / Lead Agency",
         },
         {
-            "label": "Step 4 — FAA Coordination",
+            "label": "Step 5 — Community Engagement",
             "detail": (
-                "Submit FAA Form 7460-1 (Notice of Proposed Construction or Alteration) for all structures. "
-                + ("A Letter of Agreement (LOA) with ATCT is required prior to operations." if faa_coordination else "Aeronautical study recommended; NOTAM protocols to be established with local FSDO.")
+                f"Pre-application neighborhood engagement required before any {'CUP hearing' if hearing_required else 'administrative decision on a Conditional zone application'}. "
+                "Applicant must document: issues raised, design or operational changes made in response, "
+                "and proposed ongoing community liaison and complaint-response process. "
+                "For Tier 3 hubs, engagement must occur with property owners within 500 ft of the operational boundary."
+            ),
+            "required": tier >= 2,
+            "agency": "Applicant / Community",
+        },
+        {
+            "label": "Step 6 — FAA Coordination",
+            "detail": (
+                "Submit FAA Form 7460-1 (Notice of Proposed Construction or Alteration) for structures that may affect navigable airspace. "
+                + (
+                    f"This site is near a {airport_type.upper().replace('_', ' ')} facility. "
+                    "Consult with WSDOT Aviation Division and the airport manager. "
+                    "Note: FAA airspace authorization does not grant land-use approval. "
+                    if faa_coord else
+                    "Confirm applicant's Remote ID compliance and current operational authorization (Part 107, 135, or anticipated Part 108). "
+                    "FAA airspace authorization is separate from local land-use approval."
+                )
             ),
             "required": True,
-            "agency": "Federal Aviation Administration",
+            "agency": "Federal Aviation Administration / WSDOT Aviation Division",
         },
         {
-            "label": "Step 5 — State Aeronautics Division Notification",
-            "detail": f"File required notice with the {state} Division of Aeronautics per state aviation code. Some states require a permit for new landing areas; confirm current {state} requirements.",
-            "required": True,
-            "agency": f"{state} Division of Aeronautics",
-        },
-        {
-            "label": "Step 6 — Building Permits & Inspections",
-            "detail": "All structures, electrical systems, and mechanical equipment require standard building permits and inspections. Structural engineering wet-stamp required for rooftop installations.",
+            "label": "Step 7 — Building Permits and Inspections",
+            "detail": (
+                "All structures, electrical systems (charging infrastructure), mechanical equipment, and battery storage facilities "
+                "require standard building permits and inspection. Fire code compliance review required for lithium-ion battery storage. "
+                "Structural engineering required for rooftop or elevated pad installations."
+            ),
             "required": True,
             "agency": f"{municipality} Building & Safety Division",
         },
     ]
 
-    if tier >= 3:
+    if dev_agreement:
         pathways.append({
-            "label": "Step 7 — Transportation Demand Management (TDM) Plan",
-            "detail": "Applicant must submit and implement a TDM Plan addressing ground-side traffic generation, parking, and intermodal connections. Annual monitoring report required.",
-            "required": True,
-            "agency": f"{municipality} Public Works / Transportation",
-        })
-
-    if tier == 4:
-        pathways.append({
-            "label": "Step 8 — Development Agreement",
-            "detail": "Due to facility scale and long-term infrastructure implications, the City may require a Development Agreement per Government Code § 65864 et seq., establishing vested rights in exchange for public benefits.",
-            "required": True,
+            "label": "Step 8 — Development Agreement (Tier 3)",
+            "detail": (
+                "For Tier 3 hubs, the reviewing authority may require a Development Agreement capturing: "
+                "operational commitments (sortie counts, ground-activity hours, complaint response), "
+                "monitoring obligations, community benefit provisions, review triggers, and a performance review "
+                "at 18–24 months after commencement of operations. "
+                f"Authorized under applicable {state} state law."
+            ),
+            "required": False,
             "agency": f"{municipality} City Council",
         })
 
+    if tier >= 3:
+        pathways.append({
+            "label": "Step 9 — Periodic Code Review",
+            "detail": (
+                "Given the pace of FAA rulemaking (including proposed Part 108 for BVLOS normalization) and "
+                "evolving industry practices, conditions of approval should include a mechanism for review every "
+                "2–3 years so that local standards can be updated as federal rules and operational patterns evolve."
+            ),
+            "required": False,
+            "agency": f"{municipality} Planning Department",
+        })
+
     appeal_path = (
-        "Appeal of Planning Commission action to City Council within 10 days of decision."
-        if hearing_required else
-        "Appeal of Administrative Use Permit to Planning Commission within 10 days of decision."
+        f"Appeal of {primary_path} to Planning Commission within 14 days of written decision."
+        if not hearing_required else
+        f"Appeal of Planning Commission decision to City Council within 14 days of written decision."
     )
 
     return {
         "pathways": pathways,
         "primary_entitlement": primary_path,
         "public_hearing_required": hearing_required,
-        "ceqa_track": ceqa_class,
+        "notice_radius_ft": notice_radius_ft,
+        "environmental_track": sepa_track,
         "estimated_timeline_weeks": timeline_weeks,
-        "estimated_fees": deposit_range,
-        "faa_coordination_required": faa_coordination,
+        "estimated_fees": fee_range,
+        "development_agreement_recommended": dev_agreement,
+        "faa_coordination_required": faa_coord,
+        "aircraft_hour_limits": (
+            "NOT APPLICABLE — This ordinance does not regulate aircraft operating hours. "
+            "Only ground-based site activity (loading, maintenance, lighting, employee activity) "
+            "may be regulated, and only if comparable standards apply to similar commercial or industrial uses. "
+            "Drone-specific aircraft operating-hour limits should be avoided unless reviewed by counsel."
+        ),
         "appeal_path": appeal_path,
+        "wsdot_reference": "WSDOT Drone Hub Land Use Guidance v5.3, Section 5 and Table 3 (June 2026)",
         "notes": (
-            f"Timeline and fee estimates are indicative for Tier {tier} in {density} context, {state}. "
-            "Actual processing times vary by jurisdiction. Pre-application coordination is strongly recommended."
+            f"Approval pathway for Tier {tier} in {density} context, {state}. "
+            "Timeline and fee estimates are indicative. "
+            "'Lighter review track' means administrative/non-discretionary site plan review without a public hearing (WSDOT v5.3 terminology). "
+            "Part 108 BVLOS rulemaking is anticipated but not yet final as of mid-2026; ordinance language should "
+            "reference federal rules by function rather than specific part number to avoid future amendments."
         ),
     }
 
 
 def _build_prompt(inputs: dict, tier: int) -> str:
-    return f"""You are a municipal planning consultant specializing in aviation infrastructure entitlements.
+    return f"""You are a municipal planning consultant applying WSDOT Drone Hub Land Use Guidance v5.3 (June 2026).
 
-Generate a step-by-step approval pathway for a Tier {tier} drone hub or vertiport in {inputs.get('state', 'a U.S. state')}.
+Generate the approval pathway for a Tier {tier} drone hub in {inputs.get('state', 'a U.S. state')}.
 
 PROJECT PARAMETERS:
 {inputs}
 
+WSDOT GUIDANCE REQUIREMENTS:
+- Tier 1 and 2 in "Permitted" zones: administrative (lighter review track), NO public hearing, ministerial approval
+- Tier 1 and 2 in "Conditional" zones: 300-ft notice radius + public hearing
+- Tier 3: 500-ft notice radius + public hearing; development agreement recommended; periodic code review clause
+- AIRCRAFT OPERATING HOUR LIMITS: Do NOT include these — local governments cannot set aircraft-specific hours
+- Ground-based site activity (loading, maintenance, parking, lighting, generators) CAN be regulated
+- FAA coordination note must clarify: airspace authorization ≠ land-use approval
+- Include community engagement requirements (pre-application for CUP zones; documented for Tier 3)
+- Reference proposed 14 CFR Part 108 (BVLOS) as emerging framework; write standards by function not part number
+
 Return a JSON object with:
-- pathways: array of steps, each with: label, detail, required (bool), agency, timeline (optional), estimated_fees (optional)
-- primary_entitlement: string (e.g. "Ministerial Permit", "CUP", "Development Agreement")
+- pathways: array of step objects with: label, detail, required (bool), agency, notice_radius_ft (optional), timeline (optional), estimated_fees (optional)
+- primary_entitlement: string
 - public_hearing_required: boolean
-- ceqa_track: string (CEQA/NEPA review class or document type)
+- notice_radius_ft: number
+- environmental_track: string
 - estimated_timeline_weeks: string
 - estimated_fees: string
+- development_agreement_recommended: boolean
 - faa_coordination_required: boolean
+- aircraft_hour_limits: string (explanation of why NOT included)
 - appeal_path: string
+- wsdot_reference: string
 - notes: string
 
 Return only valid JSON."""
 
 
 class PathwaysAgent:
-    def generate(self, inputs: dict, tier: int = 2) -> dict:
+    def generate(self, inputs: dict, tier: int = 1) -> dict:
         api_live = __import__("os").environ.get("ANTHROPIC_API_KEY") or __import__("os").environ.get("OPENAI_API_KEY")
         if not api_live:
             return _mock_pathways(inputs, tier)

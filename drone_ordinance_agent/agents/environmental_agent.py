@@ -1,6 +1,13 @@
 """
 Environmental Review Triggers Agent.
-Determines which environmental review thresholds apply and what studies are required.
+Aligned with WSDOT Drone Hub Land Use Guidance v5.3 (June 2026).
+
+Key corrections from prior version:
+- REMOVED: flight path regulation triggers (local governments cannot restrict flight paths)
+- REMOVED: aircraft operating hour limits (not a local land-use authority)
+- FOCUS: ground-based impacts — ground noise, acreage, wetlands, floodplain, traffic
+- Added: reference to FAA Draft Programmatic Environmental Assessment (Dec 2025)
+- Added: FAA Part 135/108 NEPA tiering note
 """
 
 from .base import call_llm, parse_json_response
@@ -11,146 +18,202 @@ except ImportError:
 
 
 def _mock_environmental(inputs: dict, tier: int) -> dict:
-    scale = inputs.get("operational_scale", 100)
+    daily_ops = inputs.get("operational_scale", 0)
     acreage = inputs.get("site_acreage", 0.0)
     wetland = inputs.get("wetland_nearby", False)
     floodplain = inputs.get("floodplain_nearby", False)
-    residential_ft = inputs.get("residential_proximity_ft", 0)
     state = inputs.get("state", "the State")
     density = inputs.get("density", "suburban")
+    num_operators = inputs.get("num_operators", 1)
 
     triggers = []
     studies_required = []
     mitigation_measures = []
 
-    # Noise
-    if scale > config.ENV_TRIGGERS["noise_ops_per_day"]:
+    # --- Ground-based noise ---
+    # High-volume threshold per WSDOT: >100 flights per rolling 60-min period
+    # As proxy: flag if daily ops suggest persistent high throughput
+    is_high_volume = daily_ops > config.ENV_TRIGGERS["noise_flights_per_hour"]
+    if is_high_volume or tier >= 3:
         triggers.append({
-            "trigger": "Noise Impact Study Required",
-            "threshold": f">{config.ENV_TRIGGERS['noise_ops_per_day']} operations/day",
-            "actual": f"{scale} operations/day",
+            "trigger": "Ground-Based Noise Assessment",
+            "threshold": f"Tier {tier} facility" + (f" / {daily_ops} daily ops" if is_high_volume else ""),
+            "actual": f"Tier {tier}, {daily_ops} daily ops",
             "triggered": True,
-            "detail": f"Facility exceeds {config.ENV_TRIGGERS['noise_ops_per_day']} ops/day. An acoustical study prepared by a qualified acoustical engineer is required, modeling cumulative DNL and CNEL at all noise-sensitive receptors within 1 mile.",
+            "detail": (
+                "An acoustical study is required for ground-based equipment noise (loading, unloading, maintenance, "
+                "charging, generators, vehicles). Noise from these sources must comply with generally applicable local "
+                "noise or nuisance standards. NOTE: This study does NOT assess aircraft source noise — that falls under "
+                "FAA jurisdiction. Where the project involves Part 135 package delivery, ask the applicant whether the "
+                "FAA Draft Programmatic Environmental Assessment (December 2025) or a project-specific FAA NEPA document "
+                "addresses noise at the proposed site, and whether any FAA assumptions about setbacks or intensity are relevant."
+            ),
         })
-        studies_required.append("Acoustical / Noise Impact Study")
-        mitigation_measures.append("Operational hour restrictions if noise exceeds applicable community noise levels.")
-        mitigation_measures.append("Noise barriers or berms along residential-facing property lines if modeled levels exceed thresholds.")
+        studies_required.append("Ground-Based Acoustical Study (equipment and vehicle noise only; not aircraft source noise)")
+        mitigation_measures.append("Ground-based equipment (charging banks, HVAC, generators) shall comply with local noise ordinance at the property line.")
+        mitigation_measures.append("Screening walls or berms between operational boundary and residential uses where ambient modeling shows exceedance.")
 
-    # CEQA acreage
+    # --- Significant ground disturbance ---
     if acreage >= config.ENV_TRIGGERS["acreage_threshold"]:
         triggers.append({
-            "trigger": "Significant Ground Disturbance",
-            "threshold": f">={config.ENV_TRIGGERS['acreage_threshold']} acres disturbed",
+            "trigger": "Ground Disturbance / Environmental Site Assessment",
+            "threshold": f">= {config.ENV_TRIGGERS['acreage_threshold']} acres disturbed",
             "actual": f"{acreage} acres",
             "triggered": True,
-            "detail": f"Project disturbs ≥{config.ENV_TRIGGERS['acreage_threshold']} acres. A Phase I Environmental Site Assessment is required. CEQA/NEPA documentation must address geology, soils, and hazardous materials.",
+            "detail": (
+                f"Project disturbs {acreage} acres. A Phase I Environmental Site Assessment (ESA) is required. "
+                "SEPA/CEQA/NEPA documentation must address geology, soils, stormwater, and hazardous materials. "
+                "A Stormwater Pollution Prevention Plan (SWPPP) is required for land-disturbing activities."
+            ),
         })
         studies_required.append("Phase I Environmental Site Assessment (ESA)")
         studies_required.append("Stormwater Pollution Prevention Plan (SWPPP)")
 
-    # Wetlands
+    # --- Wetlands ---
     if wetland:
         triggers.append({
-            "trigger": "Wetland Proximity",
+            "trigger": "Wetland Proximity — Section 404 / State Wetland Review",
             "threshold": f"Wetland within {config.ENV_TRIGGERS['wetland_buffer_feet']} ft",
             "actual": "Wetland confirmed nearby",
             "triggered": True,
             "detail": (
                 f"Site is within {config.ENV_TRIGGERS['wetland_buffer_feet']} ft of a wetland. "
-                "A wetland delineation and jurisdictional determination (Army Corps of Engineers Section 404 / "
-                f"{state} state wetland permit) is required. No flight path corridor may be established over wetland areas without FAA and Army Corps approval."
+                "A wetland delineation and Army Corps of Engineers Section 404 jurisdictional determination is required. "
+                f"A {state} state wetland permit may also be required. "
+                "No fill or alteration of jurisdictional waters may occur without Section 404 / Section 401 permits."
             ),
         })
-        studies_required.append("Wetland Delineation & Jurisdictional Determination (Army Corps / State)")
+        studies_required.append("Wetland Delineation and Army Corps Jurisdictional Determination")
         studies_required.append("Biological Resources Assessment")
         mitigation_measures.append("Section 404 / Section 401 permits required if any fill or alteration of jurisdictional waters.")
+        mitigation_measures.append("Wetland buffer planting and stormwater controls as required by permit conditions.")
 
-    # Floodplain
+    # --- Floodplain ---
     if floodplain:
         triggers.append({
-            "trigger": "FEMA Floodplain",
-            "threshold": "Site within FEMA Special Flood Hazard Area (SFHA)",
+            "trigger": "FEMA Floodplain Compliance",
+            "threshold": "Site within or adjacent to FEMA Special Flood Hazard Area (SFHA)",
             "actual": "Floodplain confirmed",
             "triggered": True,
-            "detail": "Site is within or adjacent to a FEMA-designated Special Flood Hazard Area. A FEMA Flood Zone Certification is required. All GSI must be elevated or flood-proofed to the Base Flood Elevation + 1 ft freeboard. Conditional Letter of Map Revision (CLOMR) may be required.",
-        })
-        studies_required.append("FEMA Flood Zone Certification / Floodplain Analysis")
-        mitigation_measures.append("All GSI structures flood-proofed to BFE + 1 ft.")
-
-    # Flight path over residential
-    if residential_ft > 0 and residential_ft < config.ENV_TRIGGERS["flight_path_residential_dist"]:
-        triggers.append({
-            "trigger": "Residential Flight Path Proximity",
-            "threshold": f"Residential within {config.ENV_TRIGGERS['flight_path_residential_dist']} ft of flight path",
-            "actual": f"{residential_ft} ft",
-            "triggered": True,
             "detail": (
-                f"Nearest residential structure is {residential_ft} ft from the proposed flight path corridor. "
-                "A Health Risk Assessment (HRA) may be required by the local air quality management district. "
-                "Community benefit agreement recommended."
+                "Site is within or adjacent to a FEMA-designated Special Flood Hazard Area. "
+                "A Floodplain Development Permit is required. All structures and ground support infrastructure "
+                "must be elevated or flood-proofed to the Base Flood Elevation + 1 ft freeboard. "
+                "A Conditional Letter of Map Revision (CLOMR) may be required prior to construction."
             ),
         })
-        studies_required.append("Health Risk Assessment (HRA) — Air Quality Management District")
-        mitigation_measures.append("Community outreach and benefits program for impacted residential areas.")
+        studies_required.append("FEMA Floodplain Development Permit / Flood Zone Certification")
+        mitigation_measures.append("All GSI structures elevated or flood-proofed to BFE + 1 ft freeboard.")
 
-    # Always required at Tier 3+
-    if tier >= 3:
+    # --- Traffic and transportation (Tier 3) ---
+    if tier >= 3 or num_operators > 1:
         triggers.append({
-            "trigger": "Traffic & Circulation Study",
-            "threshold": "Tier 3+ facility",
-            "actual": f"Tier {tier}",
+            "trigger": "Transportation Impact Analysis (Tier 3 / Multi-Operator)",
+            "threshold": "Tier 3 or multiple-operator facility",
+            "actual": f"Tier {tier}, {num_operators} operator(s)",
             "triggered": True,
-            "detail": "All Tier 3 and 4 facilities must submit a Transportation Impact Analysis (TIA) modeling ground-side vehicle trips, parking demand, and intermodal transfer queuing.",
+            "detail": (
+                "A Transportation Impact Analysis (TIA) is required, modeling ground-side vehicle trips "
+                "(delivery vans, maintenance vehicles, employee commutes), parking demand, loading/unloading queuing, "
+                "and intermodal access. For shared multi-operator hubs, cumulative trip generation from all operators "
+                "must be included. A Transportation Demand Management (TDM) Plan may be required as a condition of approval."
+            ),
         })
         studies_required.append("Transportation Impact Analysis (TIA)")
+        if tier >= 3:
+            studies_required.append("Transportation Demand Management (TDM) Plan")
 
-    # Determine CEQA document type
-    if tier >= 4 or (len(triggers) >= 3) or (acreage >= 5.0):
-        ceqa_document = "Environmental Impact Report (EIR)"
+    # --- Battery and fire safety (Tier 2+) ---
+    if tier >= 2:
+        triggers.append({
+            "trigger": "Fire Safety Review — Lithium-Ion Battery Storage",
+            "threshold": "Tier 2+ / installed charging and battery storage infrastructure",
+            "actual": f"Tier {tier} with installed charging/docking",
+            "triggered": True,
+            "detail": (
+                "A fire protection plan for lithium-ion energy storage systems (ESS) is required, consistent with "
+                "applicable IFC/NFPA standards and local fire code. The plan shall address battery volume, thermal "
+                "runaway mitigation, suppression systems, and emergency response coordination with local fire department."
+            ),
+        })
+        studies_required.append("Fire Protection Plan — Lithium-Ion Energy Storage Systems (IFC/NFPA compliance)")
+        mitigation_measures.append("Battery storage sited and constructed per applicable IFC and NFPA 855 standards.")
+
+    # --- FAA NEPA note (informational, not a local trigger) ---
+    faa_nepa_note = (
+        "Informational: In December 2025, the FAA released a Draft Programmatic Environmental Assessment (PEA) "
+        "for Drone Package Delivery Operations. For facilities involving Part 135 or anticipated Part 108 package "
+        "delivery operations, staff should ask the applicant to identify whether FAA NEPA review has been completed "
+        "or is anticipated for the proposed operation, and whether any FAA noise or setback assumptions in that review "
+        "are relevant to this site. The FAA PEA is a technical reference — it is not a local zoning standard or "
+        "substitute for site-specific review."
+    )
+
+    # Determine recommended environmental document type
+    if tier >= 3 or len(triggers) >= 3 or acreage >= 5.0:
+        env_doc = "Environmental Impact Statement / Report (EIS/EIR) — or full SEPA/CEQA review required"
     elif len(triggers) >= 1:
-        ceqa_document = "Initial Study / Mitigated Negative Declaration (IS/MND)"
+        env_doc = "Initial Study / Mitigated Negative Declaration (IS/MND) or SEPA Mitigated DNS"
     elif tier == 1 and not triggers:
-        ceqa_document = "Categorical Exemption — Class 3 (New Construction of Small Structures)"
+        env_doc = "Categorical Exemption (verify applicability with Lead Agency)"
     else:
-        ceqa_document = "Initial Study / Negative Declaration (IS/ND)"
+        env_doc = "Threshold Determination / Negative Declaration (SEPA DNS or CEQA ND)"
 
     return {
         "triggers": triggers,
         "studies_required": studies_required,
         "mitigation_measures": mitigation_measures,
-        "ceqa_document": ceqa_document,
+        "recommended_env_document": env_doc,
         "trigger_count": len(triggers),
+        "faa_nepa_note": faa_nepa_note,
+        "excluded_from_local_review": [
+            "Aircraft flight paths and routes — FAA jurisdiction; local governments may not restrict",
+            "Aircraft source noise — regulated by FAA, not local noise ordinance",
+            "Aircraft operating hours — only ground-based activity hours may be regulated locally",
+            "Airspace use and authorization — FAA exclusive jurisdiction",
+        ],
+        "wsdot_reference": "WSDOT Drone Hub Land Use Guidance v5.3, Sections 3–4 and Site Evaluation Checklist (June 2026)",
         "notes": (
-            f"Environmental review analysis for Tier {tier} facility in {state} ({density} context). "
-            f"Recommended CEQA/NEPA document type: {ceqa_document}. "
-            "Consult with the local Lead Agency to confirm document type and scope prior to NOP/NOI filing."
+            f"Environmental review for Tier {tier} facility in {state} ({density} context). "
+            f"Recommended document type: {env_doc}. "
+            "Consult with Lead Agency to confirm document scope prior to SEPA/CEQA determination. "
+            "Local environmental review focuses on ground-based impacts only; aircraft operational impacts are "
+            "addressed through FAA NEPA review, not local environmental review."
         ),
     }
 
 
 def _build_prompt(inputs: dict, tier: int) -> str:
-    return f"""You are an environmental planner and CEQA/NEPA specialist.
+    return f"""You are an environmental planner applying WSDOT Drone Hub Land Use Guidance v5.3 (June 2026) and SEPA/CEQA principles.
 
-Identify all environmental review triggers for a Tier {tier} drone hub or vertiport.
+Identify environmental review triggers for a Tier {tier} drone hub.
 
 PROJECT PARAMETERS:
 {inputs}
 
+CRITICAL CONSTRAINTS (per WSDOT v5.3 and FAA preemption):
+1. Do NOT include triggers related to flight paths, aircraft routes, or airspace — these are FAA jurisdiction.
+2. Do NOT include aircraft operating hours — local governments cannot set these.
+3. Do NOT include aircraft source noise — FAA jurisdiction; local review covers ground-based equipment noise only.
+4. FOCUS on: ground-based noise (equipment/vehicles), site disturbance, wetlands, floodplain, traffic (Tier 3), fire safety (battery storage), FAA NEPA tiering note.
+5. Include a note about the FAA Draft Programmatic Environmental Assessment (December 2025) for Part 135/108 operations.
+
 Return a JSON object with:
 - triggers: array of objects, each with: trigger (name), threshold (string), actual (string), triggered (bool), detail (string)
-- studies_required: list of required study names
-- mitigation_measures: list of mitigation measures
-- ceqa_document: recommended CEQA/NEPA document type
+- studies_required: list of study names
+- mitigation_measures: list of measures
+- recommended_env_document: string (SEPA/CEQA document type)
 - trigger_count: integer
+- faa_nepa_note: string (informational note about FAA NEPA process, not a local trigger)
+- excluded_from_local_review: list of strings (items that are FAA jurisdiction, not local)
+- wsdot_reference: string
 - notes: string
-
-Cover: noise, ground disturbance/CEQA, wetlands (Section 404), floodplain (FEMA), flight path residential proximity, traffic (Tier 3+), biological resources.
 
 Return only valid JSON."""
 
 
 class EnvironmentalAgent:
-    def generate(self, inputs: dict, tier: int = 2) -> dict:
+    def generate(self, inputs: dict, tier: int = 1) -> dict:
         api_live = __import__("os").environ.get("ANTHROPIC_API_KEY") or __import__("os").environ.get("OPENAI_API_KEY")
         if not api_live:
             return _mock_environmental(inputs, tier)

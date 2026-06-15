@@ -127,27 +127,46 @@ if page == "Configure":
 
         with col2:
             st.subheader("Facility Parameters")
-            operational_scale = st.number_input(
-                "Operational Scale (ops/day) *",
+            hub_area_sqft = st.number_input(
+                "Dedicated Hub Area (sq ft) *",
+                min_value=100,
+                max_value=500000,
+                value=5000,
+                step=500,
+                help="Primary tier metric (WSDOT v5.3): square footage of pads, staging, charging, storage, and maintenance zones combined.",
+            )
+            num_operators = st.number_input(
+                "Number of Operators",
                 min_value=1,
+                max_value=20,
+                value=1,
+                help="Multiple operators is a Tier 3 trigger regardless of hub area.",
+            )
+            operational_scale = st.number_input(
+                "Daily Operations (ops/day)",
+                min_value=0,
                 max_value=5000,
-                value=75,
-                help="Maximum daily takeoff + landing cycles anticipated.",
+                value=50,
+                help="Expected daily takeoff + landing cycles. High-volume = >100 per rolling 60-min period.",
             )
             site_acreage = st.number_input(
                 "Site Acreage",
                 min_value=0.0,
                 max_value=500.0,
-                value=1.5,
+                value=0.5,
                 step=0.1,
-                help="Total project site area in acres.",
+                help="Total project site area in acres (used for environmental review thresholds).",
             )
             residential_proximity_ft = st.number_input(
                 "Nearest Residential Structure (ft)",
                 min_value=0,
                 max_value=10000,
-                value=600,
-                help="Distance from proposed pad edge to nearest residential structure.",
+                value=400,
+                help="Distance from proposed operational boundary to nearest residential structure.",
+            )
+            accessory_use = st.checkbox(
+                "Accessory use (incidental to existing restaurant, retail, warehouse, etc.)",
+                help="An accessory drone hub is subordinate to an existing primary commercial/industrial use. Does not reduce tier by itself.",
             )
 
         st.subheader("Environmental Flags")
@@ -172,11 +191,14 @@ if page == "Configure":
             airport_type=airport_type,
             density=density,
             operational_scale=int(operational_scale),
+            hub_area_sqft=int(hub_area_sqft),
+            num_operators=int(num_operators),
             municipality=municipality.strip(),
             site_acreage=float(site_acreage),
             wetland_nearby=wetland_nearby,
             floodplain_nearby=floodplain_nearby,
             residential_proximity_ft=int(residential_proximity_ft),
+            accessory_use=accessory_use,
             notes=notes.strip(),
         )
         st.session_state["ordinance_session"] = new_session
@@ -264,13 +286,21 @@ elif page == "Results":
     )
     st.markdown(tier_data.get("description", ""))
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Operational Class", tier_data.get("operational_class", "—"))
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Hub Area", f"{tier_data.get('hub_area_sqft', 0):,} sq ft")
     col2.metric("FAA Coordination", "Required" if tier_data.get("faa_coordination_required") else "Recommended")
-    col3.metric("Density Context", tier_data.get("density_modifier", "—").replace("_", " ").title())
+    col3.metric("Density Context", tier_data.get("density_context", "—").replace("_", " ").title())
+    col4.metric("Accessory Use", "Yes" if tier_data.get("accessory_use") else "No")
+
+    if tier_data.get("tier_3_triggers"):
+        triggers_str = "; ".join(tier_data["tier_3_triggers"])
+        st.warning(f"Tier 3 secondary triggers: {triggers_str}")
 
     if tier_data.get("faa_coordination_note"):
         st.info(tier_data["faa_coordination_note"])
+
+    if tier_data.get("state_preemption_note"):
+        st.warning(f"State preemption note: {tier_data['state_preemption_note']}")
 
     st.markdown("---")
 
@@ -329,21 +359,37 @@ elif page == "Results":
         setback_data = session.get_output("setback_recommendations")
 
         col_s1, col_s2, col_s3 = st.columns(3)
-        col_s1.metric("Density Multiplier", f"{setback_data.get('density_multiplier', '—')}×")
-        col_s2.metric("Tier Factor", f"{setback_data.get('tier_factor', '—')}×")
-        col_s3.metric("Airport Proximity", f"{setback_data.get('airport_proximity_miles', '—')} miles")
+        col_s1.metric("Residential Default", f"{setback_data.get('residential_default_ft', '—')} ft")
+        col_s2.metric("Residential Minimum", f"{setback_data.get('residential_minimum_ft', '—')} ft")
+        col_s3.metric("School/Hospital Threshold", f"{setback_data.get('school_hospital_review_threshold_ft', '—')} ft")
+
+        st.info(f"**Measurement basis:** {setback_data.get('measurement_basis', 'Operational boundary')}")
+
+        if setback_data.get("density_planning_note"):
+            st.markdown(f"_{setback_data['density_planning_note']}_")
 
         items = setback_data.get("items", [])
         if items:
             import pandas as pd
-            rows = [{"Land Use / Context": i["label"], "Setback (ft)": i["feet"]} for i in items]
+            rows = []
+            for item in items:
+                rows.append({
+                    "Land Use Context": item["label"],
+                    "Default (ft)": item.get("default_ft", "N/A") or "N/A",
+                    "Minimum (ft)": item.get("minimum_ft", "N/A") or "N/A",
+                    "Reducible": "Yes" if item.get("reducible") else "No",
+                })
             df = pd.DataFrame(rows)
             st.dataframe(df, use_container_width=True, hide_index=True)
 
             st.markdown("**Detailed Requirements**")
             for item in items:
-                with st.expander(f"{item['label']} — {item['feet']} ft"):
+                default_ft = item.get("default_ft") or 0
+                label_str = f"{item['label']} — {default_ft} ft default" if default_ft else item["label"]
+                with st.expander(label_str):
                     st.markdown(item["detail"])
+                    if item.get("source"):
+                        st.caption(f"Source: {item['source']}")
 
         if setback_data.get("airport_note"):
             st.warning(setback_data["airport_note"])
@@ -355,10 +401,11 @@ elif page == "Results":
         st.subheader("Approval Pathways")
         path_data = session.get_output("approval_pathways")
 
-        col_p1, col_p2, col_p3 = st.columns(3)
-        col_p1.metric("Primary Entitlement", path_data.get("primary_entitlement", "—"))
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        col_p1.metric("Primary Entitlement", path_data.get("primary_entitlement", "—")[:30] + "...")
         col_p2.metric("Est. Timeline", path_data.get("estimated_timeline_weeks", "—") + " wks")
-        col_p3.metric("Est. Fees", path_data.get("estimated_fees", "—"))
+        col_p3.metric("Notice Radius", f"{path_data.get('notice_radius_ft', 0)} ft")
+        col_p4.metric("Est. Fees", path_data.get("estimated_fees", "—"))
 
         hearing = path_data.get("public_hearing_required", False)
         if hearing:
@@ -366,8 +413,12 @@ elif page == "Results":
         else:
             st.success("Administrative review — no public hearing required (unless appealed).")
 
-        st.markdown(f"**CEQA/NEPA Track:** {path_data.get('ceqa_track', '—')}")
+        st.markdown(f"**Environmental Track:** {path_data.get('environmental_track', '—')}")
         st.markdown(f"**FAA Coordination:** {'Required' if path_data.get('faa_coordination_required') else 'Recommended'}")
+        if path_data.get("aircraft_hour_limits"):
+            st.warning(f"**Aircraft hours:** {path_data['aircraft_hour_limits']}")
+        if path_data.get("development_agreement_recommended"):
+            st.info("Development Agreement recommended for this Tier 3 facility.")
 
         st.markdown("---")
         for i, step in enumerate(path_data.get("pathways", []), 1):
@@ -392,7 +443,7 @@ elif page == "Results":
 
         col_e1, col_e2 = st.columns(2)
         col_e1.metric("Triggers Identified", env_data.get("trigger_count", 0))
-        col_e2.metric("Recommended CEQA Document", env_data.get("ceqa_document", "—"))
+        col_e2.metric("Recommended Document", env_data.get("recommended_env_document", "—")[:40] + "...")
 
         triggers = env_data.get("triggers", [])
         if triggers:
@@ -416,6 +467,15 @@ elif page == "Results":
             st.markdown("**Mitigation Measures**")
             for m in mitigations:
                 st.markdown(f"- {m}")
+
+        excluded = env_data.get("excluded_from_local_review", [])
+        if excluded:
+            with st.expander("Items Excluded from Local Review (FAA Jurisdiction)"):
+                for e in excluded:
+                    st.markdown(f"- {e}")
+
+        if env_data.get("faa_nepa_note"):
+            st.info(env_data["faa_nepa_note"])
 
         if env_data.get("notes"):
             st.caption(env_data["notes"])

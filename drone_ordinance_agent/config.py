@@ -1,5 +1,6 @@
 """
 Configuration for the Drone Hub / Vertiport Ordinance Agent.
+Aligned with WSDOT Drone Hub Land Use Guidance v5.3 (June 2026).
 """
 
 import os
@@ -13,34 +14,75 @@ TEMPERATURE = 0.4  # Lower temp for regulatory precision
 EXPORTS_DIR = "exports"
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
-# --- Tier Classification Thresholds (daily operations) ---
-TIER_THRESHOLDS = {
-    "tier_1": 50,    # Micro-hub: up to 50 ops/day
-    "tier_2": 200,   # Community vertiport: 51-200 ops/day
-    "tier_3": 500,   # Regional hub: 201-500 ops/day
-    "tier_4": 9999,  # Major vertiport: 500+ ops/day
+# --- Tier Classification — primary metric: dedicated hub area (sq ft)
+# Secondary triggers for Tier 3: multiple operators, high-volume ops, major infrastructure
+# Source: WSDOT Drone Hub Land Use Guidance v5.3, Table 1
+TIER_SQFT = {
+    "tier_1_max": 9999,     # < 10,000 sq ft
+    "tier_2_max": 20000,    # 10,000 – 20,000 sq ft
+    "tier_3_min": 20001,    # >= 20,001 sq ft (or triggers below)
 }
 
-# --- Setback Base Values (feet) — adjusted by density multiplier ---
-SETBACK_BASES = {
-    "residential": 500,
-    "commercial": 150,
-    "industrial": 75,
-    "public_open_space": 250,
-    "school_hospital": 750,
-    "flight_path_buffer": 200,
+# Tier 3 secondary triggers (any one is sufficient even if sqft < 20,000)
+TIER_3_SECONDARY_TRIGGERS = {
+    "multiple_operators": True,       # more than one UAS operator sharing the hub
+    "high_volume_per_hour": 100,      # > 100 flights in any rolling 60-min period
+    "daily_flights_threshold": 300,   # > 300 takeoffs+landings per calendar month = persistent high activity
+    "overnight_ground_activity": True,
+    "permanent_charging_docking": True,
 }
 
-# --- Density Multipliers ---
-DENSITY_MULTIPLIERS = {
-    "rural": 0.5,
-    "suburban": 1.0,
-    "urban": 1.5,
-    "dense_urban": 2.0,
+# --- Advisory Setback Thresholds (feet from OPERATIONAL BOUNDARY, not parcel line)
+# Source: WSDOT v5.3 Table 2 (advisory defaults for local adaptation)
+# These are starting points — local jurisdictions calibrate to context
+ADVISORY_SETBACKS = {
+    "urban": {
+        "residential_default_ft": 150,
+        "residential_minimum_ft": 150,   # may be reduced below 150 by discretionary approval
+        "school_hospital_ft": 300,       # heightened review threshold
+    },
+    "suburban": {
+        "residential_default_ft": 300,
+        "residential_minimum_ft": 150,   # reducible to 150 ft by discretionary approval
+        "school_hospital_ft": 300,
+    },
+    "rural": {
+        "residential_default_ft": 300,
+        "residential_minimum_ft": 300,   # not reducible by default; land generally available
+        "school_hospital_ft": 300,
+    },
+    "dense_urban": {
+        "residential_default_ft": 150,
+        "residential_minimum_ft": 150,
+        "school_hospital_ft": 300,
+    },
 }
 
-# --- Airport Proximity Triggers (miles) ---
-AIRPORT_PROXIMITY = {
+# Tier 3 sensitive-receptor review threshold
+TIER_3_REVIEW_THRESHOLD_FT = 300  # planning-level starting point per WSDOT v5.3
+
+# Notice radii for approval hearings
+NOTICE_RADIUS_TIER_1_2_FT = 300
+NOTICE_RADIUS_TIER_3_FT = 500
+
+# High-volume operations threshold
+HIGH_VOLUME_FLIGHTS_PER_HOUR = 100
+
+# --- Zone Compatibility Matrix — Source: WSDOT v5.3 Table 3
+# P = Permitted (administrative, non-discretionary)
+# C = Conditional / Special Use (discretionary, public hearing)
+# X = Prohibited
+ZONE_COMPATIBILITY = {
+    "Residential (all)":                        {"tier_1": "X", "tier_2": "X", "tier_3": "X"},
+    "Neighborhood Commercial / Mixed Use":       {"tier_1": "C", "tier_2": "C", "tier_3": "C"},
+    "Regional Commercial / Retail":             {"tier_1": "P", "tier_2": "P", "tier_3": "C"},
+    "Industrial / Logistics":                   {"tier_1": "P", "tier_2": "P", "tier_3": "C"},
+    "Airport-Related / Aviation Overlay":       {"tier_1": "P", "tier_2": "P", "tier_3": "C"},
+    "Institutional":                            {"tier_1": "C", "tier_2": "C", "tier_3": "C"},
+}
+
+# --- Airport Proximity (miles) — for coordination notes
+AIRPORT_PROXIMITY_MILES = {
     "class_b": 30,
     "class_c": 20,
     "class_d": 10,
@@ -48,15 +90,15 @@ AIRPORT_PROXIMITY = {
     "class_g": 3,
     "heliport": 2,
     "vertiport": 1,
+    "none": 0,
 }
 
-# --- Environmental Review Trigger Thresholds ---
+# --- Environmental Review Thresholds ---
 ENV_TRIGGERS = {
-    "noise_ops_per_day": 100,       # Noise impact study required above this
-    "acreage_threshold": 2.0,       # CEQA/NEPA required above 2 acres disturbed
-    "wetland_buffer_feet": 300,     # Wetland proximity triggers review
+    "noise_flights_per_hour": 100,       # High-volume ground-noise concern
+    "acreage_threshold": 2.0,            # Phase I ESA / SEPA/NEPA triggered above this
+    "wetland_buffer_feet": 300,
     "floodplain_buffer_feet": 500,
-    "flight_path_residential_dist": 1000,  # Residential under flight path triggers review
 }
 
 # --- Display ---
