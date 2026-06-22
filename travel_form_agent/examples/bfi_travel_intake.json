@@ -1,0 +1,110 @@
+{
+  "traveler": {
+    "name": "David Ison",
+    "name_last_first_initial": "Ison, David, C",
+    "employee_id": "20165887",
+    "class_title": "TPS-4",
+    "address": "2763 NW 32nd Ave",
+    "city": "Camas",
+    "state": "WA",
+    "zip_code": "98607",
+    "official_station": "OLYMPIA",
+    "official_residence": "CAMAS",
+    "regular_work_hours": "M-F 0800-1700",
+    "supervisor_name": "Eric Johnson"
+  },
+  "event_title": "AAAE ACT/BFI Innovation Event",
+  "destination_city": "Seattle",
+  "departure_datetime": "04/21/26 0600",
+  "return_datetime": "04/21/26 1800",
+  "meeting_begin_datetime": "04/21/26 1000",
+  "meeting_end_datetime": "04/21/26 1400",
+  "payment_methods": ["Other"],
+  "other_payment_method_description": "Mileage",
+  "registration_fee": 150.00,
+  "airfare": 0.00,
+  "request_other_fees": 0.00,
+  "subsistence_days": 1,
+  "subsistence_rate": 24.00,
+  "lodging_days": 0,
+  "lodging_rate": 0,
+  "hotel_name": "NA",
+  "hotel_city": "",
+  "comments": "Drive personal vehicle entire trip to avoid delays due to Seattle traffic. Home to/from HQ at GC01 (229.8 miles x 0.70 = 160.86) and HQ to/from BFI airport at GC02 (112.2 miles x 0.205 = 23.00). Total drive $183.86. Lunch provided.",
+  "remarks": "Registration and mileage entered from approved travel request. Lunch provided.",
+  "signature_date": "2026-04-21",
+  "daily_expenses": [
+    {
+      "date": "2026-04-21",
+      "trip_from": "Camas",
+      "trip_to": "Tumwater",
+      "depart": "0600",
+      "return_time": "1800",
+      "breakfast": 24.00,
+      "lunch": 0,
+      "dinner": 0,
+      "lodging": 0,
+      "miles": 229.8,
+      "mileage_rate": 0.70,
+      "pov_reason": "D",
+      "purpose": "AAAE ACT/BFI Innovation Event"
+    },
+    {
+      "date": "2026-04-21",
+      "trip_from": "Tumwater",
+      "trip_to": "Seattle/BFI",
+      "depart": "",
+      "return_time": "",
+      "breakfast": 0,
+      "lunch": 0,
+      "dinner": 0,
+      "lodging": 0,
+      "miles": 112.2,
+      "mileage_rate": 0.205,
+      "pov_reason": "",
+      "purpose": "AAAE ACT/BFI Innovation Event"
+    }
+  ],
+  "other_expenses": [
+    {
+      "date": "2026-04-21",
+      "paid_to": "AAAE",
+      "for_what": "Registration",
+      "amount": 150.00
+    }
+  ],
+  "account_codes": [
+    {
+      "work_order": "AD0632",
+      "group": "02",
+      "work_op": "0605",
+      "object_code": "EG02",
+      "org_code": "691010",
+      "amount": 150.00
+    },
+    {
+      "work_order": "AD0632",
+      "group": "02",
+      "work_op": "0605",
+      "object_code": "GA02",
+      "org_code": "691010",
+      "amount": 24.00
+    },
+    {
+      "work_order": "AD0632",
+      "group": "02",
+      "work_op": "0605",
+      "object_code": "GC01",
+      "org_code": "691010",
+      "amount": 160.86
+    },
+    {
+      "work_order": "AD0632",
+      "group": "02",
+      "work_op": "0605",
+      "object_code": "GC02",
+      "org_code": "691010",
+      "amount": 23.00
+    }
+  ]
+}
