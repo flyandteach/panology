@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+exports/*.json
+exports/*.csv
+aam_reality_monitor/generated_reports/

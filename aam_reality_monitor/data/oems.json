@@ -1,0 +1,157 @@
+[
+  {
+    "aircraft": [
+      "S4"
+    ],
+    "company_type": "public",
+    "country": "United States",
+    "name": "Joby Aviation",
+    "notes": "Sample OEM profile; evidence must be manually verified.",
+    "oem_id": "joby",
+    "regulators": [
+      "FAA"
+    ],
+    "ticker": "JOBY",
+    "website": "https://www.jobyaviation.com"
+  },
+  {
+    "aircraft": [
+      "Midnight"
+    ],
+    "company_type": "public",
+    "country": "United States",
+    "name": "Archer Aviation",
+    "notes": "Sample OEM profile; evidence must be manually verified.",
+    "oem_id": "archer",
+    "regulators": [
+      "FAA"
+    ],
+    "ticker": "ACHR",
+    "website": "https://www.archer.com"
+  },
+  {
+    "aircraft": [
+      "ALIA CX300",
+      "ALIA A250"
+    ],
+    "company_type": "private",
+    "country": "United States",
+    "name": "Beta Technologies",
+    "notes": "Sample OEM profile; evidence must be manually verified.",
+    "oem_id": "beta",
+    "regulators": [
+      "FAA"
+    ],
+    "ticker": null,
+    "website": "https://www.beta.team"
+  },
+  {
+    "aircraft": [
+      "Generation 6"
+    ],
+    "company_type": "private",
+    "country": "United States",
+    "name": "Wisk Aero",
+    "notes": "Sample OEM profile; evidence must be manually verified.",
+    "oem_id": "wisk",
+    "regulators": [
+      "FAA"
+    ],
+    "ticker": null,
+    "website": "https://wisk.aero"
+  },
+  {
+    "aircraft": [
+      "Eve eVTOL"
+    ],
+    "company_type": "public",
+    "country": "Brazil",
+    "name": "Eve Air Mobility",
+    "notes": "Starter profile; add evidence manually.",
+    "oem_id": "eve",
+    "regulators": [
+      "ANAC",
+      "FAA",
+      "EASA"
+    ],
+    "ticker": "EVEX",
+    "website": "https://www.eveairmobility.com"
+  },
+  {
+    "aircraft": [
+      "VX4"
+    ],
+    "company_type": "public",
+    "country": "United Kingdom",
+    "name": "Vertical Aerospace",
+    "notes": "Starter profile; add evidence manually.",
+    "oem_id": "vertical",
+    "regulators": [
+      "CAA",
+      "EASA"
+    ],
+    "ticker": "EVTL",
+    "website": "https://vertical-aerospace.com"
+  },
+  {
+    "aircraft": [
+      "Lilium Jet"
+    ],
+    "company_type": "public",
+    "country": "Germany",
+    "name": "Lilium",
+    "notes": "Track only if relevant; verify current status before scoring.",
+    "oem_id": "lilium",
+    "regulators": [
+      "EASA",
+      "FAA"
+    ],
+    "ticker": "LILM",
+    "website": "https://lilium.com"
+  },
+  {
+    "aircraft": [
+      "S-A2"
+    ],
+    "company_type": "subsidiary",
+    "country": "United States",
+    "name": "Supernal",
+    "notes": "Starter profile; add evidence manually.",
+    "oem_id": "supernal",
+    "regulators": [
+      "FAA"
+    ],
+    "ticker": null,
+    "website": "https://www.supernal.aero"
+  },
+  {
+    "aircraft": [
+      "VoloCity"
+    ],
+    "company_type": "private",
+    "country": "Germany",
+    "name": "Volocopter",
+    "notes": "Starter profile; add evidence manually.",
+    "oem_id": "volocopter",
+    "regulators": [
+      "EASA"
+    ],
+    "ticker": null,
+    "website": "https://www.volocopter.com"
+  },
+  {
+    "aircraft": [
+      "EL9"
+    ],
+    "company_type": "private",
+    "country": "United States",
+    "name": "Electra.aero",
+    "notes": "Starter profile; add evidence manually.",
+    "oem_id": "electra",
+    "regulators": [
+      "FAA"
+    ],
+    "ticker": null,
+    "website": "https://www.electra.aero"
+  }
+]

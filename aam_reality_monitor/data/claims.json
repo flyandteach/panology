@@ -1,0 +1,17 @@
+[
+  {
+    "claim_category": "general",
+    "claim_date": "2026-06-08",
+    "claim_id": "cl_sample_0001",
+    "claim_reality_score": 0,
+    "claim_source": "Sample Data",
+    "claim_status": "promotional_only",
+    "claim_text": "Placeholder claim for testing; not a company claim.",
+    "contradicting_evidence_ids": [],
+    "notes": "Do not use for real assessment.",
+    "oem_id": "joby",
+    "specificity": "low",
+    "supporting_evidence_ids": [],
+    "verifiability": "low"
+  }
+]

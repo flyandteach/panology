@@ -1,0 +1,9 @@
+[project]
+name = "aam-reality-monitor"
+version = "0.1.0"
+description = "Local evidence-based AAM/eVTOL OEM reality monitoring CLI"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["aam_reality_monitor/tests"]
+pythonpath = ["."]
