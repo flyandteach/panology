@@ -223,8 +223,12 @@ with tab_guided:
                         st.warning("Enter origin and destination first.")
 
             if pov_miles > 0:
-                st.metric("Mileage claim", f"${pov_miles * pov_rate_used:.2f}",
-                          delta=f"{pov_miles:.1f} mi × ${pov_rate_used:.3f}")
+                rt_miles = pov_miles * 2
+                st.metric(
+                    "Mileage claim (round trip)",
+                    f"${rt_miles * pov_rate_used:.2f}",
+                    delta=f"{pov_miles:.1f} mi × 2 legs = {rt_miles:.1f} mi × ${pov_rate_used:.3f}",
+                )
 
             if not state_vehicle_available:
                 pov_reason = st.text_input("Reason POV preferred over state vehicle",
@@ -402,7 +406,7 @@ with tab_guided:
                 "lunch": day_l,
                 "dinner": day_d,
                 "lodging": lodging_rate_val if (is_overnight and not is_last) else 0.0,
-                "miles": pov_miles if (transport == "Personal vehicle (POV)" and is_first) else 0.0,
+                "miles": (pov_miles * 2 if not is_overnight else pov_miles) if (transport == "Personal vehicle (POV)" and is_first) else 0.0,
                 "mileage_rate": pov_rate_used if (transport == "Personal vehicle (POV)" and is_first) else 0.0,
                 "pov_reason": pov_reason if (transport == "Personal vehicle (POV)" and is_first) else "",
                 "purpose": event_title,
@@ -431,7 +435,7 @@ with tab_guided:
         if total_subsistence > 0:
             account_codes.append({**base_acct, "object_code": subsistence_code, "amount": total_subsistence})
         if transport == "Personal vehicle (POV)" and pov_miles > 0:
-            trips = 2 if is_overnight else 1
+            trips = 2
             mileage_total = round(pov_miles * trips * pov_rate_used, 2)
             account_codes.append({**base_acct, "object_code": pov_code, "amount": mileage_total})
         if parking_amt > 0:
@@ -521,7 +525,7 @@ with tab_guided:
                 payload = build_payload()
                 mileage_display = ""
                 if transport == "Personal vehicle (POV)" and pov_miles > 0:
-                    trips = 2 if is_overnight else 1
+                    trips = 2
                     total_mi = pov_miles * trips
                     mileage_display = (
                         f"\n- **Mileage:** {pov_miles:.1f} mi × {trips} "
