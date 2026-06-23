@@ -32,14 +32,18 @@ st.title("WSDOT Travel Form Agent")
 st.caption("Fill in the trip details and click Generate. Meal tiers, object codes, days/nights, and mileage are all computed automatically.")
 
 # ---------------------------------------------------------------------------
-# Load saved profile into session state on first run
+# Load saved profile into session state on first run.
+# IMPORTANT: we set st.session_state[key] BEFORE the widgets render so that
+# the key= parameter on each text_input picks up the saved value.
 # ---------------------------------------------------------------------------
 if "_profile_loaded" not in st.session_state:
-    profile = load_profile()
+    profile = load_profile()   # returns dict keyed p_name, p_employee_id, …
     for key in PROFILE_KEYS:
-        if key not in st.session_state:
-            st.session_state[key] = profile.get(key, "")
-    st.session_state["state"] = st.session_state.get("state") or "WA"
+        st.session_state[key] = profile.get(key, "")
+    if not st.session_state.get("p_state"):
+        st.session_state["p_state"] = "WA"
+    if not st.session_state.get("p_regular_hours"):
+        st.session_state["p_regular_hours"] = "M-F 0800-1700"
     st.session_state["_profile_loaded"] = True
 
 # ---------------------------------------------------------------------------
@@ -56,36 +60,35 @@ with tab_guided:
     # Section 1 – Traveler profile
     # -----------------------------------------------------------------------
     with st.expander("Section 1 – Traveler profile", expanded=True):
-        st.caption("Filled automatically from your saved profile. Edit and click **Save profile** to update.")
-        c1, c2 = st.columns(2)
-        st.session_state["name"] = c1.text_input("Full name", value=st.session_state["name"])
-        st.session_state["name_lfi"] = c2.text_input("Last, First, M.I.", value=st.session_state["name_lfi"],
-                                                       placeholder="Smith, Jane, A")
-        c1b, c2b, c3b = st.columns(3)
-        st.session_state["employee_id"] = c1b.text_input("Employee ID", value=st.session_state["employee_id"])
-        st.session_state["class_title"] = c2b.text_input("Class / title", value=st.session_state["class_title"],
-                                                           placeholder="TPS-4")
-        st.session_state["regular_hours"] = c3b.text_input("Regular work hours",
-                                                             value=st.session_state["regular_hours"] or "M-F 0800-1700")
-        c1c, c2c = st.columns(2)
-        st.session_state["official_station"] = c1c.text_input("Official station (duty city)",
-                                                                value=st.session_state["official_station"],
-                                                                placeholder="OLYMPIA")
-        st.session_state["official_residence"] = c2c.text_input("Official residence (home city)",
-                                                                  value=st.session_state["official_residence"],
-                                                                  placeholder="CAMAS")
-        st.session_state["address"] = st.text_input("Street address", value=st.session_state["address"])
-        c1d, c2d, c3d = st.columns([3, 1, 1])
-        st.session_state["city"] = c1d.text_input("City", value=st.session_state["city"])
-        st.session_state["state"] = c2d.text_input("State", value=st.session_state["state"], max_chars=2)
-        st.session_state["zip"] = c3d.text_input("ZIP", value=st.session_state["zip"])
-        c1e, c2e = st.columns(2)
-        st.session_state["supervisor"] = c1e.text_input("Supervisor name", value=st.session_state["supervisor"])
-        st.session_state["approver"] = c2e.text_input("Approving authority", value=st.session_state["approver"])
+        if load_profile():
+            st.success("Profile loaded from your saved file.")
+        else:
+            st.info("Fill in your details and click **Save profile**. They will load automatically every time you open the app.")
 
-        if st.button("Save profile", help="Saves to ~/.wsdot_travel_profile.json so it loads automatically next time"):
-            save_profile({k: st.session_state[k] for k in PROFILE_KEYS})
-            st.success("Profile saved.")
+        # Use key= so Streamlit reads/writes directly from session_state.
+        # The values pre-set above (from load_profile) appear automatically.
+        c1, c2 = st.columns(2)
+        c1.text_input("Full name", key="p_name")
+        c2.text_input("Last, First, M.I.", key="p_name_lfi", placeholder="Smith, Jane, A")
+        c1b, c2b, c3b = st.columns(3)
+        c1b.text_input("Employee ID", key="p_employee_id")
+        c2b.text_input("Class / title", key="p_class_title", placeholder="TPS-4")
+        c3b.text_input("Regular work hours", key="p_regular_hours")
+        c1c, c2c = st.columns(2)
+        c1c.text_input("Official station (duty city)", key="p_official_station", placeholder="OLYMPIA")
+        c2c.text_input("Official residence (home city)", key="p_official_residence", placeholder="CAMAS")
+        st.text_input("Street address", key="p_address")
+        c1d, c2d, c3d = st.columns([3, 1, 1])
+        c1d.text_input("City", key="p_city")
+        c2d.text_input("State", key="p_state", max_chars=2)
+        c3d.text_input("ZIP", key="p_zip")
+        c1e, c2e = st.columns(2)
+        c1e.text_input("Supervisor name", key="p_supervisor")
+        c2e.text_input("Approving authority", key="p_approver")
+
+        if st.button("Save profile", help="Saves to ~/.wsdot_travel_profile.json – loads automatically next time"):
+            save_profile(st.session_state)
+            st.success("Profile saved. It will load automatically next time you open the app.")
 
     # -----------------------------------------------------------------------
     # Section 2 – Trip basics
@@ -192,7 +195,7 @@ with tab_guided:
             st.caption(f"Rate: ${pov_rate_used:.3f}/mi  |  Object code: **{pov_code}**")
 
             mc1, mc2 = st.columns(2)
-            pov_from = mc1.text_input("Trip origin", value=st.session_state.get("official_residence", ""),
+            pov_from = mc1.text_input("Trip origin", value=st.session_state.get("p_official_residence", ""),
                                        placeholder="Camas")
             pov_to = mc2.text_input("Trip destination", value=destination_city, placeholder="Seattle")
 
@@ -362,13 +365,10 @@ with tab_guided:
     with st.expander("Section 6 – Charge codes", expanded=True):
         st.caption("Object code column is filled automatically. Enter your work order and org code.")
         acc1, acc2, acc3 = st.columns(3)
-        st.session_state["work_order"] = acc1.text_input("Work order", value=st.session_state["work_order"])
-        st.session_state["group_code"] = acc2.text_input("Group", value=st.session_state["group_code"],
-                                                          placeholder="02")
-        st.session_state["work_op"] = acc3.text_input("Work op", value=st.session_state["work_op"],
-                                                       placeholder="0605")
-        st.session_state["org_code"] = st.text_input("Org code", value=st.session_state["org_code"],
-                                                      placeholder="691010")
+        acc1.text_input("Work order", key="p_work_order")
+        acc2.text_input("Group", key="p_group_code", placeholder="02")
+        acc3.text_input("Work op", key="p_work_op", placeholder="0605")
+        st.text_input("Org code", key="p_org_code", placeholder="691010")
         travel_advance = st.number_input("Travel advance received ($)", min_value=0.0, step=1.0)
         remarks = st.text_area("Remarks (expense voucher)",
                                placeholder="Registration and mileage entered from approved travel request.")
@@ -379,10 +379,10 @@ with tab_guided:
     # Build payload
     # -----------------------------------------------------------------------
     def build_payload():
-        work_order = st.session_state["work_order"]
-        group_code = st.session_state["group_code"]
-        work_op = st.session_state["work_op"]
-        org_code = st.session_state["org_code"]
+        work_order = st.session_state["p_work_order"]
+        group_code = st.session_state["p_group_code"]
+        work_op = st.session_state["p_work_op"]
+        org_code = st.session_state["p_org_code"]
         base_acct = {"work_order": work_order, "group": group_code, "work_op": work_op, "org_code": org_code}
 
         # Build per-day expense lines
@@ -392,9 +392,9 @@ with tab_guided:
             is_last = i == len(meal_totals_by_day) - 1
             entry = {
                 "date": day.strftime("%Y-%m-%d"),
-                "trip_from": (pov_from or st.session_state.get("official_residence", "")) if is_first else destination_city,
+                "trip_from": (pov_from or st.session_state.get("p_official_residence", "")) if is_first else destination_city,
                 "trip_to": (pov_to or destination_city) if is_first else (
-                    (pov_from or st.session_state.get("official_residence", "")) if is_last else destination_city
+                    (pov_from or st.session_state.get("p_official_residence", "")) if is_last else destination_city
                 ),
                 "depart": depart_time if is_first else "",
                 "return_time": return_time_str if is_last else "",
@@ -414,7 +414,7 @@ with tab_guided:
             daily_expenses.append({
                 "date": return_date.strftime("%Y-%m-%d"),
                 "trip_from": pov_to or destination_city,
-                "trip_to": pov_from or st.session_state.get("official_residence", ""),
+                "trip_to": pov_from or st.session_state.get("p_official_residence", ""),
                 "depart": "",
                 "return_time": return_time_str,
                 "breakfast": 0.0, "lunch": 0.0, "dinner": 0.0, "lodging": 0.0,
@@ -463,21 +463,22 @@ with tab_guided:
                 "amount": other_amt,
             })
 
+        ss = st.session_state
         return {
             "traveler": {
-                "name": st.session_state["name"],
-                "name_last_first_initial": st.session_state["name_lfi"],
-                "employee_id": st.session_state["employee_id"],
-                "class_title": st.session_state["class_title"],
-                "address": st.session_state["address"],
-                "city": st.session_state["city"],
-                "state": st.session_state["state"],
-                "zip_code": st.session_state["zip"],
-                "official_station": st.session_state["official_station"],
-                "official_residence": st.session_state["official_residence"],
-                "regular_work_hours": st.session_state["regular_hours"],
-                "supervisor_name": st.session_state["supervisor"],
-                "approving_authority_name": st.session_state["approver"],
+                "name": ss["p_name"],
+                "name_last_first_initial": ss["p_name_lfi"],
+                "employee_id": ss["p_employee_id"],
+                "class_title": ss["p_class_title"],
+                "address": ss["p_address"],
+                "city": ss["p_city"],
+                "state": ss["p_state"],
+                "zip_code": ss["p_zip"],
+                "official_station": ss["p_official_station"],
+                "official_residence": ss["p_official_residence"],
+                "regular_work_hours": ss["p_regular_hours"],
+                "supervisor_name": ss["p_supervisor"],
+                "approving_authority_name": ss["p_approver"],
             },
             "event_title": event_title,
             "destination_city": destination_city,
@@ -512,7 +513,7 @@ with tab_guided:
         col_rv, col_gen = st.columns(2)
 
         if col_rv.button("Review summary", use_container_width=True):
-            if not st.session_state["name"]:
+            if not st.session_state["p_name"]:
                 st.error("Enter your name in Section 1 and click Save Profile.")
             elif not event_title or not destination_city:
                 st.error("Complete the event name and destination in Section 2.")
@@ -553,7 +554,7 @@ with tab_guided:
                     st.json(payload)
 
         if col_gen.button("Generate forms", type="primary", use_container_width=True):
-            if not st.session_state["name"] or not event_title or not destination_city:
+            if not st.session_state["p_name"] or not event_title or not destination_city:
                 st.error("Name (Section 1), event name, and destination (Section 2) are required.")
             else:
                 try:
