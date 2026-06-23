@@ -1,17 +1,21 @@
-"""Guided intake form for WSDOT Travel Request and Expense Voucher generation."""
+"""WSDOT Travel Form Agent – guided intake form."""
 
 from __future__ import annotations
 
 import json
 import tempfile
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import List, Optional
 
 import streamlit as st
 
 from travel_agent import TravelFormAgent, TravelIntake
+from travel_agent.geo import driving_miles
+from travel_agent.profile import PROFILE_KEYS, load_profile, save_profile
 from travel_agent.rates import (
+    POV_ELECTIVE_RATE,
+    POV_FULL_RATE,
     get_meal_amounts,
     meal_tier_for_city,
     mileage_object_code,
@@ -19,60 +23,69 @@ from travel_agent.rates import (
     other_travel_object_code,
     registration_object_code,
     subsistence_object_code,
-    POV_FULL_RATE,
-    POV_ELECTIVE_RATE,
 )
 
 BASE = Path(__file__).resolve().parent
 
 st.set_page_config(page_title="WSDOT Travel Form Agent", layout="wide", initial_sidebar_state="collapsed")
 st.title("WSDOT Travel Form Agent")
-st.caption("Fill out the form below. The agent resolves meal tiers, object codes, and mileage, then produces your completed WSDOT forms.")
+st.caption("Fill in the trip details and click Generate. Meal tiers, object codes, days/nights, and mileage are all computed automatically.")
 
 # ---------------------------------------------------------------------------
-# Session state helpers
+# Load saved profile into session state on first run
 # ---------------------------------------------------------------------------
-
-def ss(key, default=None):
-    if key not in st.session_state:
-        st.session_state[key] = default
-    return st.session_state[key]
+if "_profile_loaded" not in st.session_state:
+    profile = load_profile()
+    for key in PROFILE_KEYS:
+        if key not in st.session_state:
+            st.session_state[key] = profile.get(key, "")
+    st.session_state["state"] = st.session_state.get("state") or "WA"
+    st.session_state["_profile_loaded"] = True
 
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-
 tab_guided, tab_json = st.tabs(["Guided Form", "JSON Upload"])
 
 # ===========================================================================
 # GUIDED FORM TAB
 # ===========================================================================
 with tab_guided:
+
     # -----------------------------------------------------------------------
-    # Section 1 – Traveler (standing info, reused across trips)
+    # Section 1 – Traveler profile
     # -----------------------------------------------------------------------
-    with st.expander("Section 1 – Traveler (saved between trips)", expanded=True):
+    with st.expander("Section 1 – Traveler profile", expanded=True):
+        st.caption("Filled automatically from your saved profile. Edit and click **Save profile** to update.")
         c1, c2 = st.columns(2)
-        traveler_name = c1.text_input("Full name", value=ss("t_name", ""), key="t_name")
-        traveler_name_lfi = c2.text_input("Last, First, M.I.", value=ss("t_name_lfi", ""), key="t_name_lfi",
-                                           placeholder="Smith, Jane, A")
+        st.session_state["name"] = c1.text_input("Full name", value=st.session_state["name"])
+        st.session_state["name_lfi"] = c2.text_input("Last, First, M.I.", value=st.session_state["name_lfi"],
+                                                       placeholder="Smith, Jane, A")
         c1b, c2b, c3b = st.columns(3)
-        employee_id = c1b.text_input("Employee ID", value=ss("t_emp_id", ""), key="t_emp_id")
-        class_title = c2b.text_input("Class / title", value=ss("t_class", ""), key="t_class", placeholder="TPS-4")
-        regular_hours = c3b.text_input("Regular work hours", value=ss("t_hours", "M-F 0800-1700"), key="t_hours")
+        st.session_state["employee_id"] = c1b.text_input("Employee ID", value=st.session_state["employee_id"])
+        st.session_state["class_title"] = c2b.text_input("Class / title", value=st.session_state["class_title"],
+                                                           placeholder="TPS-4")
+        st.session_state["regular_hours"] = c3b.text_input("Regular work hours",
+                                                             value=st.session_state["regular_hours"] or "M-F 0800-1700")
         c1c, c2c = st.columns(2)
-        official_station = c1c.text_input("Official station (duty city)", value=ss("t_station", ""), key="t_station",
-                                           placeholder="OLYMPIA")
-        official_residence = c2c.text_input("Official residence (home city)", value=ss("t_residence", ""),
-                                             key="t_residence", placeholder="CAMAS")
-        address = c1.text_input("Street address", value=ss("t_address", ""), key="t_address")
+        st.session_state["official_station"] = c1c.text_input("Official station (duty city)",
+                                                                value=st.session_state["official_station"],
+                                                                placeholder="OLYMPIA")
+        st.session_state["official_residence"] = c2c.text_input("Official residence (home city)",
+                                                                  value=st.session_state["official_residence"],
+                                                                  placeholder="CAMAS")
+        st.session_state["address"] = st.text_input("Street address", value=st.session_state["address"])
         c1d, c2d, c3d = st.columns([3, 1, 1])
-        addr_city = c1d.text_input("City", value=ss("t_city", ""), key="t_city")
-        addr_state = c2d.text_input("State", value=ss("t_state", "WA"), key="t_state", max_chars=2)
-        addr_zip = c3d.text_input("ZIP", value=ss("t_zip", ""), key="t_zip")
+        st.session_state["city"] = c1d.text_input("City", value=st.session_state["city"])
+        st.session_state["state"] = c2d.text_input("State", value=st.session_state["state"], max_chars=2)
+        st.session_state["zip"] = c3d.text_input("ZIP", value=st.session_state["zip"])
         c1e, c2e = st.columns(2)
-        supervisor = c1e.text_input("Supervisor name", value=ss("t_supervisor", ""), key="t_supervisor")
-        approver = c2e.text_input("Approving authority", value=ss("t_approver", ""), key="t_approver")
+        st.session_state["supervisor"] = c1e.text_input("Supervisor name", value=st.session_state["supervisor"])
+        st.session_state["approver"] = c2e.text_input("Approving authority", value=st.session_state["approver"])
+
+        if st.button("Save profile", help="Saves to ~/.wsdot_travel_profile.json so it loads automatically next time"):
+            save_profile({k: st.session_state[k] for k in PROFILE_KEYS})
+            st.success("Profile saved.")
 
     # -----------------------------------------------------------------------
     # Section 2 – Trip basics
@@ -90,42 +103,59 @@ with tab_guided:
             ["In-state (Washington)", "Out-of-state (continental US)", "Out-of-country (includes Canada)"],
             horizontal=True,
         )
-        scope_key = "in_state" if scope.startswith("In") else ("out_of_state" if scope.startswith("Out-of-s") else "out_of_country")
-
-        overnight = st.radio("Does the trip include an overnight stay?", ["No – same day", "Yes – overnight"],
-                             horizontal=True)
-        is_overnight = overnight.startswith("Yes")
+        scope_key = (
+            "in_state" if scope.startswith("In")
+            else "out_of_state" if scope.startswith("Out-of-s")
+            else "out_of_country"
+        )
 
         event_title = st.text_input("Event / meeting name", placeholder="AAAE ACT/BFI Innovation Event")
-        destination_city = st.text_input("Destination city (or ZIP)", placeholder="Seattle")
+        destination_city = st.text_input("Destination city", placeholder="Seattle")
 
         # Auto-resolve county and meal tier
         tier_total = 68
         county_resolved = None
         if destination_city:
             tier_total, county_resolved = meal_tier_for_city(destination_city)
-            meal = get_meal_amounts(tier_total)
-            county_label = county_resolved.title() if county_resolved else "unknown"
+            meal_obj = get_meal_amounts(tier_total)
+            county_label = county_resolved.title() if county_resolved else "unknown county"
             st.info(
-                f"**Destination:** {county_label} County → **meal tier ${tier_total}** "
-                f"(B ${meal.breakfast:.0f} / L ${meal.lunch:.0f} / D ${meal.dinner:.0f})"
-                + ("" if county_resolved else "  \n⚠️ County not recognized – defaulting to base $68 tier. Verify manually.")
+                f"**{destination_city.title()}** → {county_label} County → "
+                f"**meal tier ${tier_total}** "
+                f"(B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f})"
+                + ("" if county_resolved else
+                   "\n\n⚠️ County not recognized – using base $68 tier. Verify against OFM map.")
             )
 
+        # Dates
         col_d1, col_d2 = st.columns(2)
-        travel_date = col_d1.date_input("Travel date (first day)", value=date.today())
+        travel_date = col_d1.date_input("Departure date", value=date.today())
         return_date = col_d2.date_input("Return date", value=date.today())
+
+        if return_date < travel_date:
+            st.error("Return date cannot be before departure date.")
+            return_date = travel_date
+
+        # Auto-compute days/nights
+        num_nights = (return_date - travel_date).days
+        num_days = num_nights + 1
+        is_overnight = num_nights > 0
+
+        if is_overnight:
+            st.success(f"Trip duration: **{num_days} day{'s' if num_days > 1 else ''}**, **{num_nights} night{'s' if num_nights > 1 else ''}** (overnight)")
+        else:
+            st.info("Trip duration: **same day** (no overnight) — subsistence is taxable (GA02)")
 
         col_t1, col_t2, col_t3, col_t4 = st.columns(4)
         depart_time = col_t1.text_input("Departure time", value="0600", placeholder="0600")
-        return_time = col_t2.text_input("Return time", value="1800", placeholder="1800")
-        meeting_start = col_t3.text_input("Meeting start", value="0900", placeholder="0900")
-        meeting_end = col_t4.text_input("Meeting end", value="1700", placeholder="1700")
+        return_time_str = col_t2.text_input("Return time", value="1800", placeholder="1800")
+        meeting_start = col_t3.text_input("Meeting / event start", value="0900")
+        meeting_end = col_t4.text_input("Meeting / event end", value="1700")
 
         travel_date_str = travel_date.strftime("%m/%d/%y")
         return_date_str = return_date.strftime("%m/%d/%y")
         departure_datetime = f"{travel_date_str} {depart_time}"
-        return_datetime = f"{return_date_str} {return_time}"
+        return_datetime = f"{return_date_str} {return_time_str}"
         meeting_begin_datetime = f"{travel_date_str} {meeting_start}"
         meeting_end_datetime = f"{return_date_str} {meeting_end}"
 
@@ -137,9 +167,8 @@ with tab_guided:
     with st.expander("Section 3 – Transportation", expanded=True):
         transport = st.radio(
             "How are you getting there?",
-            ["Personal vehicle (POV)", "WSDOT / motor pool vehicle", "Rental car", "Airline", "Train / rail / ferry",
-             "Multiple / other"],
-            horizontal=False,
+            ["Personal vehicle (POV)", "WSDOT / motor pool vehicle", "Rental car",
+             "Airline", "Train / rail / ferry", "Multiple / other"],
         )
 
         state_vehicle_available = False
@@ -151,89 +180,152 @@ with tab_guided:
         pov_reason = ""
         transport_payment_methods: List[str] = []
         transport_other_desc = ""
+        airfare_amt = 0.0
 
         if transport == "Personal vehicle (POV)":
-            state_vehicle_available = st.checkbox("Was a state / WSDOT vehicle available for this trip?",
-                                                  help="If yes, you claim the elective rate GC02 ($0.205/mi) instead of the full rate GC01 ($0.725/mi).")
+            state_vehicle_available = st.checkbox(
+                "Was a state / WSDOT vehicle available for this trip?",
+                help="Yes → elective rate GC02 ($0.205/mi). No → full rate GC01 ($0.725/mi).",
+            )
             pov_rate_used = POV_ELECTIVE_RATE if state_vehicle_available else POV_FULL_RATE
             pov_code = mileage_object_code(state_vehicle_available)
-            rate_label = f"${pov_rate_used:.3f}/mi ({'elective GC02' if state_vehicle_available else 'full GC01'})"
-            st.caption(f"Mileage rate: {rate_label}")
+            st.caption(f"Rate: ${pov_rate_used:.3f}/mi  |  Object code: **{pov_code}**")
 
             mc1, mc2 = st.columns(2)
-            pov_from = mc1.text_input("Trip origin", placeholder="Camas")
-            pov_to = mc2.text_input("Trip destination", placeholder="Seattle/BFI")
-            pov_miles = st.number_input("One-way miles (verify with odometer or Google Maps)", min_value=0.0, step=0.1)
-            st.caption(f"Mileage claim: {pov_miles:.1f} mi × ${pov_rate_used:.3f} = **${pov_miles * pov_rate_used:.2f}**")
-            if state_vehicle_available:
-                pov_reason = ""
-            else:
-                pov_reason = st.text_input("Reason POV preferred over state vehicle", placeholder="No state vehicle available at duty station")
+            pov_from = mc1.text_input("Trip origin", value=st.session_state.get("official_residence", ""),
+                                       placeholder="Camas")
+            pov_to = mc2.text_input("Trip destination", value=destination_city, placeholder="Seattle")
+
+            # Auto-calculate driving distance
+            dist_col, btn_col = st.columns([3, 1])
+            pov_miles = dist_col.number_input(
+                "One-way miles", min_value=0.0, step=0.1,
+                value=st.session_state.get("_pov_miles", 0.0),
+                help="Enter manually or click Calculate.",
+            )
+            with btn_col:
+                st.write("")
+                st.write("")
+                if st.button("Calculate distance"):
+                    if pov_from and pov_to:
+                        with st.spinner("Looking up driving distance…"):
+                            result = driving_miles(pov_from, pov_to)
+                        if result is not None:
+                            st.session_state["_pov_miles"] = result
+                            st.success(f"{result:.1f} miles — page will refresh with that value.")
+                            st.rerun()
+                        else:
+                            st.error("Could not calculate distance. Enter miles manually.")
+                    else:
+                        st.warning("Enter origin and destination first.")
+
+            if pov_miles > 0:
+                st.metric("Mileage claim", f"${pov_miles * pov_rate_used:.2f}",
+                          delta=f"{pov_miles:.1f} mi × ${pov_rate_used:.3f}")
+
+            if not state_vehicle_available:
+                pov_reason = st.text_input("Reason POV preferred over state vehicle",
+                                           placeholder="No state vehicle available at duty station")
             transport_payment_methods = ["Other"]
             transport_other_desc = "Mileage"
 
-        elif transport in ("WSDOT / motor pool vehicle",):
-            st.info("No mileage claimed on your Travel Request – vehicle cost rides through the equipment fund (GN01/GN02) on a journal voucher.")
-            transport_payment_methods = []
+        elif transport == "WSDOT / motor pool vehicle":
+            st.info("No mileage line on your request — vehicle cost runs through the equipment fund (GN01/GN02) on a separate journal voucher.")
 
         elif transport == "Rental car":
             transport_payment_methods = ["Car Rental"]
 
         elif transport == "Airline":
             transport_payment_methods = ["Airline travel"]
+            airfare_amt = st.number_input("Airfare ($)", min_value=0.0, step=1.0)
 
         elif transport == "Train / rail / ferry":
             transport_payment_methods = ["TrainRailFerry"]
 
         else:
             transport_payment_methods = ["Other"]
-            transport_other_desc = st.text_input("Describe other transportation")
+            transport_other_desc = st.text_input("Describe transportation")
 
     # -----------------------------------------------------------------------
-    # Section 4 – Meals
+    # Section 4 – Meals and lodging
     # -----------------------------------------------------------------------
-    with st.expander("Section 4 – Meals", expanded=True):
-        meal = get_meal_amounts(tier_total)
-        st.caption(f"Meal tier: ${tier_total} | B ${meal.breakfast:.0f} / L ${meal.lunch:.0f} / D ${meal.dinner:.0f}")
-
-        col_m1, col_m2, col_m3 = st.columns(3)
-        claim_breakfast = col_m1.checkbox(f"Breakfast (${meal.breakfast:.0f}) – in travel status?")
-        claim_lunch = col_m2.checkbox(f"Lunch (${meal.lunch:.0f}) – in travel status?")
-        claim_dinner = col_m3.checkbox(f"Dinner (${meal.dinner:.0f}) – in travel status?")
-
-        col_p1, col_p2, col_p3 = st.columns(3)
-        prov_breakfast = col_p1.checkbox("Breakfast provided (deduct)", disabled=not claim_breakfast)
-        prov_lunch = col_p2.checkbox("Lunch provided (deduct)", disabled=not claim_lunch)
-        prov_dinner = col_p3.checkbox("Dinner provided (deduct)", disabled=not claim_dinner)
-
-        breakfast_amt = meal.breakfast if (claim_breakfast and not prov_breakfast) else 0.0
-        lunch_amt = meal.lunch if (claim_lunch and not prov_lunch) else 0.0
-        dinner_amt = meal.dinner if (claim_dinner and not prov_dinner) else 0.0
-        meal_total = round(breakfast_amt + lunch_amt + dinner_amt, 2)
-        st.metric("Meal reimbursement", f"${meal_total:.2f}")
-
-        if not is_overnight and meal_total > 0:
-            st.warning("Same-day meal reimbursement (GA02) is **taxable income**. Confirm you were in travel status for each claimed meal period.")
-
+    with st.expander("Section 4 – Meals and lodging", expanded=True):
+        meal_obj = get_meal_amounts(tier_total)
         subsistence_code = subsistence_object_code(is_overnight, scope_key)
-        st.caption(f"Object code: **{subsistence_code}**")
+        st.caption(f"Meal tier: ${tier_total} (B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f})  |  Object code: **{subsistence_code}**")
 
-        # Lodging (overnight only)
+        st.markdown("**Which meals are you in travel status for?** (uncheck meals provided at no cost to you)")
+
+        # Per-day meal grid for multi-day trips
+        all_days = [travel_date + timedelta(days=i) for i in range(num_days)]
+        meal_totals_by_day = []
+
+        if num_days == 1:
+            col_m1, col_m2, col_m3 = st.columns(3)
+            b = col_m1.checkbox(f"Breakfast (${meal_obj.breakfast:.0f})", value=True)
+            l = col_m2.checkbox(f"Lunch (${meal_obj.lunch:.0f})", value=True)
+            d = col_m3.checkbox(f"Dinner (${meal_obj.dinner:.0f})", value=True)
+            col_p1, col_p2, col_p3 = st.columns(3)
+            pb = col_p1.checkbox("Breakfast provided (deduct)", disabled=not b)
+            pl = col_p2.checkbox("Lunch provided (deduct)", disabled=not l)
+            pd_ = col_p3.checkbox("Dinner provided (deduct)", disabled=not d)
+            day_b = meal_obj.breakfast if (b and not pb) else 0.0
+            day_l = meal_obj.lunch if (l and not pl) else 0.0
+            day_d = meal_obj.dinner if (d and not pd_) else 0.0
+            meal_totals_by_day = [(all_days[0], day_b, day_l, day_d)]
+        else:
+            st.markdown("*Check meals you will claim; uncheck if provided at the event or not in travel status.*")
+            day_labels = []
+            for i, d_ in enumerate(all_days):
+                if i == 0:
+                    label = f"Day 1 – {d_.strftime('%a %m/%d')} (departure)"
+                elif i == num_days - 1:
+                    label = f"Day {i+1} – {d_.strftime('%a %m/%d')} (return)"
+                else:
+                    label = f"Day {i+1} – {d_.strftime('%a %m/%d')}"
+                day_labels.append(label)
+
+            for i, (d_, label) in enumerate(zip(all_days, day_labels)):
+                st.markdown(f"**{label}**")
+                col_m1, col_m2, col_m3 = st.columns(3)
+                # Default: departure day no breakfast (leave before eligible), return day no dinner
+                default_b = True
+                default_d = True if i < num_days - 1 else False
+                b = col_m1.checkbox(f"Breakfast (${meal_obj.breakfast:.0f})", value=default_b, key=f"b_{i}")
+                l = col_m2.checkbox(f"Lunch (${meal_obj.lunch:.0f})", value=True, key=f"l_{i}")
+                dv = col_m3.checkbox(f"Dinner (${meal_obj.dinner:.0f})", value=default_d, key=f"d_{i}")
+                col_p1, col_p2, col_p3 = st.columns(3)
+                pb = col_p1.checkbox("Provided", disabled=not b, key=f"pb_{i}")
+                pl = col_p2.checkbox("Provided", disabled=not l, key=f"pl_{i}")
+                pd_ = col_p3.checkbox("Provided", disabled=not dv, key=f"pd_{i}")
+                day_b = meal_obj.breakfast if (b and not pb) else 0.0
+                day_l = meal_obj.lunch if (l and not pl) else 0.0
+                day_d = meal_obj.dinner if (dv and not pd_) else 0.0
+                meal_totals_by_day.append((d_, day_b, day_l, day_d))
+                st.divider()
+
+        total_subsistence = round(sum(b + l + d for _, b, l, d in meal_totals_by_day), 2)
+        st.metric("Total meal reimbursement", f"${total_subsistence:.2f}")
+        if not is_overnight and total_subsistence > 0:
+            st.warning("Same-day reimbursement (GA02) is **taxable income**.")
+
+        # Lodging
         lodging_amt = 0.0
         lodging_rate_val = 0.0
         hotel_name = ""
         hotel_city = ""
         if is_overnight:
-            st.markdown("**Lodging**")
+            st.markdown("---\n**Lodging**")
             lc1, lc2 = st.columns(2)
             hotel_name = lc1.text_input("Hotel name")
             hotel_city = lc2.text_input("Hotel city")
             lodging_rate_val = st.number_input("Nightly lodging rate ($)", min_value=0.0, step=1.0)
-            num_nights = st.number_input("Number of nights", min_value=1, step=1, value=1)
+            st.metric("Total lodging", f"${lodging_rate_val * num_nights:.2f}",
+                      delta=f"{num_nights} night{'s' if num_nights > 1 else ''} × ${lodging_rate_val:.2f}")
             lodging_amt = lodging_rate_val * num_nights
 
     # -----------------------------------------------------------------------
-    # Section 5 – Registration / other expenses
+    # Section 5 – Registration and other expenses
     # -----------------------------------------------------------------------
     with st.expander("Section 5 – Registration and other expenses", expanded=True):
         has_registration = st.checkbox("Registration fee?")
@@ -244,7 +336,6 @@ with tab_guided:
             registration_fee = st.number_input("Registration amount ($)", min_value=0.0, step=1.0)
             reg_code = registration_object_code(reg_type)
             st.caption(f"Object code: **{reg_code}**")
-            reg_event_url = st.text_input("Event URL (optional – paste for recordkeeping)")
 
         has_parking = st.checkbox("Parking?")
         parking_amt = 0.0
@@ -255,103 +346,100 @@ with tab_guided:
         other_desc = ""
         other_amt = 0.0
         other_code = "GD01"
+        other_exp_type = "other"
         if has_other:
             other_exp_type = st.selectbox("Expense type",
-                                          ["taxi", "ferry", "toll", "bus", "rail", "rental_car", "official_meal", "other"])
+                                          ["taxi", "rideshare", "ferry", "toll", "bus", "rail",
+                                           "rental_car", "official_meal", "other"])
             other_desc = st.text_input("Description")
             other_amt = st.number_input("Amount ($)", min_value=0.0, step=1.0)
             other_code = other_travel_object_code(other_exp_type)
             st.caption(f"Object code: **{other_code}**")
 
-        airfare_amt = 0.0
-        if transport == "Airline":
-            airfare_amt = st.number_input("Airfare ($)", min_value=0.0, step=1.0)
-
     # -----------------------------------------------------------------------
-    # Section 6 – Account / charge codes
+    # Section 6 – Charge codes
     # -----------------------------------------------------------------------
-    with st.expander("Section 6 – Charge codes (work order, org code, etc.)", expanded=True):
-        st.caption("Enter your primary work order and org code. The agent fills the object code column automatically.")
+    with st.expander("Section 6 – Charge codes", expanded=True):
+        st.caption("Object code column is filled automatically. Enter your work order and org code.")
         acc1, acc2, acc3 = st.columns(3)
-        work_order = acc1.text_input("Work order", value=ss("acc_wo", ""), key="acc_wo")
-        group_code = acc2.text_input("Group", value=ss("acc_group", ""), key="acc_group", placeholder="02")
-        work_op = acc3.text_input("Work op", value=ss("acc_wop", ""), key="acc_wop", placeholder="0605")
-        org_code = st.text_input("Org code", value=ss("acc_org", ""), key="acc_org", placeholder="691010")
+        st.session_state["work_order"] = acc1.text_input("Work order", value=st.session_state["work_order"])
+        st.session_state["group_code"] = acc2.text_input("Group", value=st.session_state["group_code"],
+                                                          placeholder="02")
+        st.session_state["work_op"] = acc3.text_input("Work op", value=st.session_state["work_op"],
+                                                       placeholder="0605")
+        st.session_state["org_code"] = st.text_input("Org code", value=st.session_state["org_code"],
+                                                      placeholder="691010")
         travel_advance = st.number_input("Travel advance received ($)", min_value=0.0, step=1.0)
-        remarks = st.text_area("Remarks (expense voucher)", placeholder="Registration and mileage entered from approved travel request.")
+        remarks = st.text_area("Remarks (expense voucher)",
+                               placeholder="Registration and mileage entered from approved travel request.")
         comments = st.text_area("Comments (travel request – transport / hotel details)",
-                                placeholder="Drive personal vehicle to avoid delays. Home to/from HQ at GC01 (XX miles × $0.725 = $XX).")
+                                placeholder="Drive personal vehicle to avoid delays. Home to/from HQ at GC01 (XX mi × $0.725 = $XX).")
 
     # -----------------------------------------------------------------------
     # Build payload
     # -----------------------------------------------------------------------
     def build_payload():
-        traveler = {
-            "name": traveler_name,
-            "name_last_first_initial": traveler_name_lfi,
-            "employee_id": employee_id,
-            "class_title": class_title,
-            "address": address,
-            "city": addr_city,
-            "state": addr_state,
-            "zip_code": addr_zip,
-            "official_station": official_station,
-            "official_residence": official_residence,
-            "regular_work_hours": regular_hours,
-            "supervisor_name": supervisor,
-            "approving_authority_name": approver,
-        }
+        work_order = st.session_state["work_order"]
+        group_code = st.session_state["group_code"]
+        work_op = st.session_state["work_op"]
+        org_code = st.session_state["org_code"]
+        base_acct = {"work_order": work_order, "group": group_code, "work_op": work_op, "org_code": org_code}
 
+        # Build per-day expense lines
         daily_expenses = []
-        if transport == "Personal vehicle (POV)" and pov_miles > 0:
+        for i, (day, day_b, day_l, day_d) in enumerate(meal_totals_by_day):
+            is_first = i == 0
+            is_last = i == len(meal_totals_by_day) - 1
+            entry = {
+                "date": day.strftime("%Y-%m-%d"),
+                "trip_from": (pov_from or st.session_state.get("official_residence", "")) if is_first else destination_city,
+                "trip_to": (pov_to or destination_city) if is_first else (
+                    (pov_from or st.session_state.get("official_residence", "")) if is_last else destination_city
+                ),
+                "depart": depart_time if is_first else "",
+                "return_time": return_time_str if is_last else "",
+                "breakfast": day_b,
+                "lunch": day_l,
+                "dinner": day_d,
+                "lodging": lodging_rate_val if (is_overnight and not is_last) else 0.0,
+                "miles": pov_miles if (transport == "Personal vehicle (POV)" and is_first) else 0.0,
+                "mileage_rate": pov_rate_used if (transport == "Personal vehicle (POV)" and is_first) else 0.0,
+                "pov_reason": pov_reason if (transport == "Personal vehicle (POV)" and is_first) else "",
+                "purpose": event_title,
+            }
+            daily_expenses.append(entry)
+
+        # Return trip mileage line (same day = already round-trip in miles entry above; multi-day = add return leg)
+        if transport == "Personal vehicle (POV)" and pov_miles > 0 and is_overnight:
             daily_expenses.append({
-                "date": travel_date.strftime("%Y-%m-%d"),
-                "trip_from": pov_from or official_residence,
-                "trip_to": pov_to or destination_city,
-                "depart": depart_time,
-                "return_time": return_time if travel_date == return_date else "",
-                "breakfast": breakfast_amt,
-                "lunch": lunch_amt,
-                "dinner": dinner_amt,
-                "lodging": lodging_amt if is_overnight else 0.0,
+                "date": return_date.strftime("%Y-%m-%d"),
+                "trip_from": pov_to or destination_city,
+                "trip_to": pov_from or st.session_state.get("official_residence", ""),
+                "depart": "",
+                "return_time": return_time_str,
+                "breakfast": 0.0, "lunch": 0.0, "dinner": 0.0, "lodging": 0.0,
                 "miles": pov_miles,
                 "mileage_rate": pov_rate_used,
                 "pov_reason": pov_reason,
                 "purpose": event_title,
             })
-        else:
-            daily_expenses.append({
-                "date": travel_date.strftime("%Y-%m-%d"),
-                "trip_from": official_residence or official_station,
-                "trip_to": destination_city,
-                "depart": depart_time,
-                "return_time": return_time if travel_date == return_date else "",
-                "breakfast": breakfast_amt,
-                "lunch": lunch_amt,
-                "dinner": dinner_amt,
-                "lodging": lodging_amt if is_overnight else 0.0,
-                "miles": 0.0,
-                "mileage_rate": 0.0,
-                "pov_reason": "",
-                "purpose": event_title,
-            })
 
-        # Build account code lines in object-code order
+        # Account codes
         account_codes = []
-        base_acct = {"work_order": work_order, "group": group_code, "work_op": work_op, "org_code": org_code}
-
         if registration_fee > 0:
             account_codes.append({**base_acct, "object_code": reg_code, "amount": registration_fee})
-        if meal_total > 0:
-            account_codes.append({**base_acct, "object_code": subsistence_code, "amount": meal_total})
+        if total_subsistence > 0:
+            account_codes.append({**base_acct, "object_code": subsistence_code, "amount": total_subsistence})
         if transport == "Personal vehicle (POV)" and pov_miles > 0:
-            mileage_amt = round(pov_miles * pov_rate_used, 2)
-            account_codes.append({**base_acct, "object_code": pov_code, "amount": mileage_amt})
+            trips = 2 if is_overnight else 1
+            mileage_total = round(pov_miles * trips * pov_rate_used, 2)
+            account_codes.append({**base_acct, "object_code": pov_code, "amount": mileage_total})
         if parking_amt > 0:
             account_codes.append({**base_acct, "object_code": "GD01", "amount": parking_amt})
         if other_amt > 0:
             account_codes.append({**base_acct, "object_code": other_code, "amount": other_amt})
 
+        # Other expenses (receipts section of 133-103)
         other_expenses = []
         if registration_fee > 0:
             other_expenses.append({
@@ -362,7 +450,7 @@ with tab_guided:
             })
         if parking_amt > 0:
             other_expenses.append({
-                "date": travel_date.strftime("%Y-%m-%d"),
+                "date": return_date.strftime("%Y-%m-%d"),
                 "paid_to": "Parking",
                 "for_what": "Parking",
                 "amount": parking_amt,
@@ -375,13 +463,22 @@ with tab_guided:
                 "amount": other_amt,
             })
 
-        # Subsistence days/rate for travel request summary
-        num_days = (return_date - travel_date).days + 1
-        sub_days = num_days if meal_total > 0 else 0
-        sub_rate = meal_total / num_days if (meal_total > 0 and num_days > 0) else 0
-
         return {
-            "traveler": traveler,
+            "traveler": {
+                "name": st.session_state["name"],
+                "name_last_first_initial": st.session_state["name_lfi"],
+                "employee_id": st.session_state["employee_id"],
+                "class_title": st.session_state["class_title"],
+                "address": st.session_state["address"],
+                "city": st.session_state["city"],
+                "state": st.session_state["state"],
+                "zip_code": st.session_state["zip"],
+                "official_station": st.session_state["official_station"],
+                "official_residence": st.session_state["official_residence"],
+                "regular_work_hours": st.session_state["regular_hours"],
+                "supervisor_name": st.session_state["supervisor"],
+                "approving_authority_name": st.session_state["approver"],
+            },
             "event_title": event_title,
             "destination_city": destination_city,
             "departure_datetime": departure_datetime,
@@ -392,64 +489,75 @@ with tab_guided:
             "other_payment_method_description": transport_other_desc,
             "registration_fee": registration_fee,
             "airfare": airfare_amt,
-            "subsistence_days": sub_days if meal_total > 0 else None,
-            "subsistence_rate": round(meal_total / sub_days, 2) if sub_days > 0 else None,
-            "lodging_days": (return_date - travel_date).days if is_overnight else 0,
-            "lodging_rate": lodging_rate_val if is_overnight else 0,
+            "subsistence_days": num_days if total_subsistence > 0 else None,
+            "subsistence_rate": round(total_subsistence / num_days, 2) if (total_subsistence > 0 and num_days) else None,
+            "lodging_days": num_nights if is_overnight else 0,
+            "lodging_rate": lodging_rate_val if is_overnight else 0.0,
             "hotel_name": hotel_name,
             "hotel_city": hotel_city,
             "comments": comments,
             "remarks": remarks,
             "signature_date": signature_date.strftime("%Y-%m-%d"),
             "travel_advance": travel_advance,
+            "request_other_fees": 0.0,
             "daily_expenses": daily_expenses,
             "account_codes": account_codes,
             "other_expenses": other_expenses,
-            "request_other_fees": 0.0,
         }
 
     # -----------------------------------------------------------------------
     # Section 7 – Review and generate
     # -----------------------------------------------------------------------
     with st.expander("Section 7 – Review and generate", expanded=True):
-        if st.button("Review trip summary", use_container_width=True):
-            if not traveler_name:
-                st.error("Enter your name in Section 1.")
-            elif not event_title:
-                st.error("Enter the event name in Section 2.")
-            elif not destination_city:
-                st.error("Enter the destination in Section 2.")
+        col_rv, col_gen = st.columns(2)
+
+        if col_rv.button("Review summary", use_container_width=True):
+            if not st.session_state["name"]:
+                st.error("Enter your name in Section 1 and click Save Profile.")
+            elif not event_title or not destination_city:
+                st.error("Complete the event name and destination in Section 2.")
             else:
                 payload = build_payload()
                 mileage_display = ""
                 if transport == "Personal vehicle (POV)" and pov_miles > 0:
-                    mileage_display = f"\n- **Mileage:** {pov_miles:.1f} mi × ${pov_rate_used:.3f} = **${pov_miles * pov_rate_used:.2f}** ({pov_code})"
+                    trips = 2 if is_overnight else 1
+                    total_mi = pov_miles * trips
+                    mileage_display = (
+                        f"\n- **Mileage:** {pov_miles:.1f} mi × {trips} "
+                        f"= {total_mi:.1f} mi × ${pov_rate_used:.3f} = "
+                        f"**${total_mi * pov_rate_used:.2f}** ({pov_code})"
+                    )
+                lines = [
+                    f"**Event:** {event_title}",
+                    f"**Destination:** {destination_city.title()}" + (f" – {county_resolved.title()} County" if county_resolved else ""),
+                    f"**Dates:** {travel_date_str} → {return_date_str}  ({num_days} day{'s' if num_days > 1 else ''}, {num_nights} night{'s' if num_nights > 1 else ''})",
+                    f"**Form:** {'Travel Request (before trip)' if is_before_trip else 'Expense Voucher (after trip)'}",
+                    "---",
+                    "**Expense lines:**",
+                    f"- **Meals:** ${total_subsistence:.2f} ({subsistence_code})" + (" ⚠️ taxable" if not is_overnight else ""),
+                ]
+                if registration_fee:
+                    lines.append(f"- **Registration:** ${registration_fee:.2f} ({reg_code})")
+                if is_overnight and lodging_amt:
+                    lines.append(f"- **Lodging:** ${lodging_amt:.2f} (GA01, {num_nights} night{'s' if num_nights > 1 else ''})")
+                if mileage_display:
+                    lines.append(mileage_display.strip("- "))
+                if parking_amt:
+                    lines.append(f"- **Parking:** ${parking_amt:.2f} (GD01)")
+                if other_amt:
+                    lines.append(f"- **{other_desc or other_exp_type}:** ${other_amt:.2f} ({other_code})")
+                grand = sum(a.get("amount", 0) for a in payload["account_codes"])
+                lines.append(f"\n**Estimated total: ${grand:.2f}**")
+                st.markdown("\n".join(lines))
+                with st.expander("View full intake JSON"):
+                    st.json(payload)
 
-                reg_display = f"\n- **Registration:** ${registration_fee:.2f} ({reg_code})" if registration_fee > 0 else ""
-                park_display = f"\n- **Parking:** ${parking_amt:.2f} (GD01)" if parking_amt > 0 else ""
-                other_display = f"\n- **{other_desc or 'Other'}:** ${other_amt:.2f} ({other_code})" if other_amt > 0 else ""
-
-                st.markdown(f"""
-**Event:** {event_title}
-**Destination:** {destination_city}{f' — {county_resolved.title()} County' if county_resolved else ''}
-**Dates:** {travel_date_str} → {return_date_str}
-**Form:** {'Travel Request' if is_before_trip else 'Expense Voucher'}
-
----
-**Expense lines:**
-- **Meals:** ${meal_total:.2f} ({subsistence_code}){'  ⚠️ taxable (same-day)' if not is_overnight and meal_total > 0 else ''}{mileage_display}{reg_display}{park_display}{other_display}
-
-**Total estimated:** ${sum(a.get('amount', 0) for a in payload['account_codes']):.2f}
-""")
-                st.json(payload, expanded=False)
-                st.session_state["_payload"] = payload
-
-        if st.button("Generate forms", type="primary", use_container_width=True):
-            if not traveler_name or not event_title or not destination_city:
-                st.error("Complete Sections 1–2 before generating.")
+        if col_gen.button("Generate forms", type="primary", use_container_width=True):
+            if not st.session_state["name"] or not event_title or not destination_city:
+                st.error("Name (Section 1), event name, and destination (Section 2) are required.")
             else:
-                payload = build_payload()
                 try:
+                    payload = build_payload()
                     intake = TravelIntake.from_dict(payload)
                     missing = intake.validate()
                     if missing:
@@ -461,14 +569,13 @@ with tab_guided:
                             exp_tpl = td_path / "133-103_template.xlsx"
                             req_tpl.write_bytes((BASE / "templates" / "travel_request_template.pdf").read_bytes())
                             exp_tpl.write_bytes((BASE / "templates" / "133-103_template.xlsx").read_bytes())
-
                             agent = TravelFormAgent(req_tpl, exp_tpl, td_path / "outputs")
                             outputs = agent.run(intake)
                             pdf_bytes = outputs["travel_request_pdf"].read_bytes()
                             xlsx_bytes = outputs["expense_voucher_xlsx"].read_bytes()
 
                         safe = "".join(c if c.isalnum() else "_" for c in event_title)[:40]
-                        st.success("Forms generated.")
+                        st.success(f"Forms generated for **{event_title}**.")
                         dl1, dl2 = st.columns(2)
                         dl1.download_button(
                             "Download Travel Request PDF",
@@ -484,28 +591,24 @@ with tab_guided:
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True,
                         )
-                        with st.expander("View intake JSON"):
-                            st.json(payload)
                 except Exception as e:
                     st.error(str(e))
                     raise
 
 # ===========================================================================
-# JSON UPLOAD TAB (original flow, unchanged)
+# JSON UPLOAD TAB
 # ===========================================================================
 with tab_json:
     st.subheader("JSON Upload")
-    st.write("Upload or paste a travel-intake JSON file to generate forms directly.")
-
-    with st.expander("Expected JSON shape", expanded=False):
+    st.write("Upload or paste a travel-intake JSON to generate forms directly.")
+    with st.expander("Example JSON", expanded=False):
         example_path = BASE / "examples" / "bfi_travel_intake.json"
         if example_path.exists():
             st.code(example_path.read_text(encoding="utf-8"), language="json")
 
     uploaded = st.file_uploader("Travel intake JSON", type=["json"], key="json_upload")
-    text = st.text_area("Or paste travel intake JSON", height=260, key="json_text")
-    travel_request_template_json = st.file_uploader("Travel request PDF template (override)", type=["pdf"],
-                                                     key="pdf_tpl")
+    text = st.text_area("Or paste JSON", height=260, key="json_text")
+    travel_request_template_json = st.file_uploader("Travel request PDF template (override)", type=["pdf"], key="pdf_tpl")
     expense_template_json = st.file_uploader("133-103 XLSX template (override)", type=["xlsx"], key="xlsx_tpl")
 
     if st.button("Generate forms from JSON", key="json_gen"):
@@ -515,33 +618,24 @@ with tab_json:
             elif text.strip():
                 payload_json = json.loads(text)
             else:
-                st.error("Provide a travel-intake JSON file or paste JSON.")
+                st.error("Provide a JSON file or paste JSON.")
                 st.stop()
-
             with tempfile.TemporaryDirectory() as td:
                 td_path = Path(td)
                 req_tpl = td_path / "travel_request_template.pdf"
                 exp_tpl = td_path / "133-103_template.xlsx"
-                if travel_request_template_json:
-                    req_tpl.write_bytes(travel_request_template_json.read())
-                else:
-                    req_tpl.write_bytes((BASE / "templates" / "travel_request_template.pdf").read_bytes())
-                if expense_template_json:
-                    exp_tpl.write_bytes(expense_template_json.read())
-                else:
-                    exp_tpl.write_bytes((BASE / "templates" / "133-103_template.xlsx").read_bytes())
-
+                req_tpl.write_bytes(travel_request_template_json.read() if travel_request_template_json
+                                    else (BASE / "templates" / "travel_request_template.pdf").read_bytes())
+                exp_tpl.write_bytes(expense_template_json.read() if expense_template_json
+                                    else (BASE / "templates" / "133-103_template.xlsx").read_bytes())
                 intake = TravelIntake.from_dict(payload_json)
                 agent = TravelFormAgent(req_tpl, exp_tpl, td_path / "outputs")
                 outputs = agent.run(intake)
                 pdf_bytes = outputs["travel_request_pdf"].read_bytes()
                 xlsx_bytes = outputs["expense_voucher_xlsx"].read_bytes()
-
             st.success("Forms generated.")
-            st.download_button("Download travel request PDF", pdf_bytes, "travel_request.pdf",
-                               mime="application/pdf")
-            st.download_button("Download travel expense voucher XLSX", xlsx_bytes,
-                               "travel_expense_voucher.xlsx",
+            st.download_button("Download Travel Request PDF", pdf_bytes, "travel_request.pdf", mime="application/pdf")
+            st.download_button("Download Expense Voucher XLSX", xlsx_bytes, "travel_expense_voucher.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as e:
             st.error(str(e))
