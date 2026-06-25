@@ -10,7 +10,7 @@ PROFILE_PATH = Path.home() / ".wsdot_travel_profile.json"
 
 # Keys use a "p_" prefix so they never collide with Streamlit widget auto-keys.
 PROFILE_KEYS = [
-    "p_name", "p_name_lfi", "p_employee_id", "p_class_title", "p_regular_hours",
+    "p_name", "p_employee_id", "p_class_title", "p_regular_hours",
     "p_official_station", "p_official_residence",
     "p_address", "p_city", "p_state", "p_zip",
     "p_supervisor", "p_approver",

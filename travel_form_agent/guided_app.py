@@ -11,7 +11,7 @@ from typing import List, Optional
 import streamlit as st
 
 from travel_agent import TravelFormAgent, TravelIntake
-from travel_agent.geo import driving_miles, route_map_png
+from travel_agent.geo import driving_miles, route_map_pdf, route_map_png
 from travel_agent.profile import PROFILE_KEYS, load_profile, save_profile
 from travel_agent.rates import (
     POV_ELECTIVE_RATE,
@@ -26,6 +26,16 @@ from travel_agent.rates import (
 )
 
 BASE = Path(__file__).resolve().parent
+
+
+def _name_last_first(full_name: str) -> str:
+    """'David Charles Ison' → 'Ison, David, C'   |   'David Ison' → 'Ison, David'"""
+    parts = full_name.strip().split()
+    if len(parts) >= 3:
+        return f"{parts[-1]}, {parts[0]}, {parts[1][0]}"
+    if len(parts) == 2:
+        return f"{parts[1]}, {parts[0]}"
+    return full_name
 
 st.set_page_config(page_title="WSDOT Travel Form Agent", layout="wide", initial_sidebar_state="collapsed")
 st.title("WSDOT Travel Form Agent")
@@ -67,9 +77,8 @@ with tab_guided:
 
         # Use key= so Streamlit reads/writes directly from session_state.
         # The values pre-set above (from load_profile) appear automatically.
-        c1, c2 = st.columns(2)
-        c1.text_input("Full name", key="p_name")
-        c2.text_input("Last, First, M.I.", key="p_name_lfi", placeholder="Smith, Jane, A")
+        st.text_input("Full name", key="p_name",
+                      help="Agent derives 'Last, First, M.I.' format automatically for the expense voucher.")
         c1b, c2b, c3b = st.columns(3)
         c1b.text_input("Employee ID", key="p_employee_id")
         c2b.text_input("Class / title", key="p_class_title", placeholder="TPS-4")
@@ -94,12 +103,7 @@ with tab_guided:
     # Section 2 – Trip basics
     # -----------------------------------------------------------------------
     with st.expander("Section 2 – Trip basics", expanded=True):
-        form_type = st.radio(
-            "What are you filling out?",
-            ["Before the trip (Travel Request)", "After the trip (Expense Voucher / 133-103)"],
-            horizontal=True,
-        )
-        is_before_trip = form_type.startswith("Before")
+        st.caption("Both the Travel Request (PDF) and Expense Voucher (XLSX) are always generated together.")
 
         scope = st.radio(
             "Where is the travel?",
@@ -218,10 +222,12 @@ with tab_guided:
                     if pov_from and pov_to:
                         with st.spinner("Calculating route and generating map…"):
                             result = driving_miles(pov_from, pov_to)
-                            map_bytes = route_map_png(pov_from, pov_to)
+                            map_pdf = route_map_pdf(pov_from, pov_to)
+                            map_png = route_map_png(pov_from, pov_to)
                         if result is not None:
                             st.session_state["_pov_miles"] = result
-                            st.session_state["_route_map"] = map_bytes
+                            st.session_state["_route_map_png"] = map_png
+                            st.session_state["_route_map_pdf"] = map_pdf
                             st.session_state["_route_from"] = pov_from
                             st.session_state["_route_to"] = pov_to
                             st.rerun()
@@ -238,19 +244,19 @@ with tab_guided:
                     delta=f"{pov_miles:.1f} mi × 2 legs = {rt_miles:.1f} mi × ${pov_rate_used:.3f}",
                 )
 
-            # Show route map and download button
-            if st.session_state.get("_route_map"):
-                st.image(st.session_state["_route_map"], use_container_width=True,
+            # Show route map and PDF download button
+            if st.session_state.get("_route_map_png"):
+                st.image(st.session_state["_route_map_png"], use_container_width=True,
                          caption=f"Route: {st.session_state.get('_route_from','')} → {st.session_state.get('_route_to','')}")
                 safe_from = "".join(c if c.isalnum() else "_" for c in st.session_state.get("_route_from", "origin"))
-                safe_to   = "".join(c if c.isalnum() else "_" for c in st.session_state.get("_route_to",   "dest"))
-                st.download_button(
-                    "Download route map (PNG)",
-                    data=st.session_state["_route_map"],
-                    file_name=f"route_{safe_from}_to_{safe_to}.png",
-                    mime="image/png",
-                    help="Attach this map to your travel request as mileage documentation.",
-                )
+                safe_to   = "".join(c if c.isalnum() else "_" for c in st.session_state.get("_route_to", "dest"))
+                if st.session_state.get("_route_map_pdf"):
+                    st.download_button(
+                        "⬇ Download route map PDF (attach to travel request)",
+                        data=st.session_state["_route_map_pdf"],
+                        file_name=f"route_{safe_from}_to_{safe_to}.pdf",
+                        mime="application/pdf",
+                    )
 
             if not state_vehicle_available:
                 pov_reason = st.text_input("Reason POV preferred over state vehicle",
@@ -493,7 +499,7 @@ with tab_guided:
         return {
             "traveler": {
                 "name": ss["p_name"],
-                "name_last_first_initial": ss["p_name_lfi"],
+                "name_last_first_initial": _name_last_first(ss["p_name"]),
                 "employee_id": ss["p_employee_id"],
                 "class_title": ss["p_class_title"],
                 "address": ss["p_address"],
@@ -558,7 +564,7 @@ with tab_guided:
                     f"**Event:** {event_title}",
                     f"**Destination:** {destination_city.title()}" + (f" – {county_resolved.title()} County" if county_resolved else ""),
                     f"**Dates:** {travel_date_str} → {return_date_str}  ({num_days} day{'s' if num_days > 1 else ''}, {num_nights} night{'s' if num_nights > 1 else ''})",
-                    f"**Form:** {'Travel Request (before trip)' if is_before_trip else 'Expense Voucher (after trip)'}",
+                    "**Forms:** Travel Request (PDF) + Expense Voucher (XLSX)",
                     "---",
                     "**Expense lines:**",
                     f"- **Meals:** ${total_subsistence:.2f} ({subsistence_code})" + (" ⚠️ taxable" if not is_overnight else ""),

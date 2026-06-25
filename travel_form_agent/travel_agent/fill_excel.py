@@ -301,8 +301,13 @@ def fill_expense_voucher_xlsx(intake: TravelIntake, template_path: str | Path, o
 
         sheet_bytes = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Skip calcChain.xml — after rewriting cells the cached chain is stale
+        # and causes Excel to refuse to open the file.
+        _SKIP = {"xl/calcChain.xml"}
         with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
+                if item.filename in _SKIP:
+                    continue
                 data = sheet_bytes if item.filename == sheet_path else zin.read(item.filename)
                 zi = zipfile.ZipInfo(item.filename, date_time=item.date_time)
                 zi.compress_type = zipfile.ZIP_DEFLATED

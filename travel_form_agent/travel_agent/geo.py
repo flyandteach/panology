@@ -182,3 +182,18 @@ def _annotate(img, origin: str, destination: str, miles: float):
 def _fallback_map_png(origin: str, destination: str) -> Optional[bytes]:
     """Return None – staticmap not installed; caller shows install instructions."""
     return None
+
+
+def route_map_pdf(origin: str, destination: str, width: int = 900, height: int = 500) -> Optional[bytes]:
+    """Return a PDF (bytes) of the route map, suitable for attaching to a travel request."""
+    png = route_map_png(origin, destination, width, height)
+    if png is None:
+        return None
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="PDF", resolution=150)
+        return buf.getvalue()
+    except Exception:
+        return None
