@@ -11,7 +11,7 @@ from typing import List, Optional
 import streamlit as st
 
 from travel_agent import TravelFormAgent, TravelIntake
-from travel_agent.geo import driving_miles
+from travel_agent.geo import driving_miles, route_map_png
 from travel_agent.profile import PROFILE_KEYS, load_profile, save_profile
 from travel_agent.rates import (
     POV_ELECTIVE_RATE,
@@ -195,27 +195,35 @@ with tab_guided:
             st.caption(f"Rate: ${pov_rate_used:.3f}/mi  |  Object code: **{pov_code}**")
 
             mc1, mc2 = st.columns(2)
-            pov_from = mc1.text_input("Trip origin", value=st.session_state.get("p_official_residence", ""),
+            # Origin defaults to saved home city/address so user rarely has to type it
+            default_origin = (
+                st.session_state.get("p_official_residence", "")
+                or st.session_state.get("p_city", "")
+            )
+            pov_from = mc1.text_input("Trip origin (home city / address)", value=default_origin,
                                        placeholder="Camas")
             pov_to = mc2.text_input("Trip destination", value=destination_city, placeholder="Seattle")
 
-            # Auto-calculate driving distance
+            # Auto-calculate driving distance + route map
             dist_col, btn_col = st.columns([3, 1])
             pov_miles = dist_col.number_input(
                 "One-way miles", min_value=0.0, step=0.1,
                 value=st.session_state.get("_pov_miles", 0.0),
-                help="Enter manually or click Calculate.",
+                help="Click 'Calculate & Map' to auto-fill, or enter manually.",
             )
             with btn_col:
                 st.write("")
                 st.write("")
-                if st.button("Calculate distance"):
+                if st.button("Calculate & Map"):
                     if pov_from and pov_to:
-                        with st.spinner("Looking up driving distance…"):
+                        with st.spinner("Calculating route and generating map…"):
                             result = driving_miles(pov_from, pov_to)
+                            map_bytes = route_map_png(pov_from, pov_to)
                         if result is not None:
                             st.session_state["_pov_miles"] = result
-                            st.success(f"{result:.1f} miles — page will refresh with that value.")
+                            st.session_state["_route_map"] = map_bytes
+                            st.session_state["_route_from"] = pov_from
+                            st.session_state["_route_to"] = pov_to
                             st.rerun()
                         else:
                             st.error("Could not calculate distance. Enter miles manually.")
@@ -228,6 +236,20 @@ with tab_guided:
                     "Mileage claim (round trip)",
                     f"${rt_miles * pov_rate_used:.2f}",
                     delta=f"{pov_miles:.1f} mi × 2 legs = {rt_miles:.1f} mi × ${pov_rate_used:.3f}",
+                )
+
+            # Show route map and download button
+            if st.session_state.get("_route_map"):
+                st.image(st.session_state["_route_map"], use_container_width=True,
+                         caption=f"Route: {st.session_state.get('_route_from','')} → {st.session_state.get('_route_to','')}")
+                safe_from = "".join(c if c.isalnum() else "_" for c in st.session_state.get("_route_from", "origin"))
+                safe_to   = "".join(c if c.isalnum() else "_" for c in st.session_state.get("_route_to",   "dest"))
+                st.download_button(
+                    "Download route map (PNG)",
+                    data=st.session_state["_route_map"],
+                    file_name=f"route_{safe_from}_to_{safe_to}.png",
+                    mime="image/png",
+                    help="Attach this map to your travel request as mileage documentation.",
                 )
 
             if not state_vehicle_available:
