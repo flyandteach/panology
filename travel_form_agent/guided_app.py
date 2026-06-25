@@ -11,13 +11,16 @@ from typing import List, Optional
 import streamlit as st
 
 from travel_agent import TravelFormAgent, TravelIntake
-from travel_agent.geo import driving_miles, route_map_pdf, route_map_png
+from travel_agent.geo import driving_miles, geocode_details, gsa_per_diem, route_map_pdf, route_map_png
 from travel_agent.profile import PROFILE_KEYS, load_profile, save_profile
 from travel_agent.rates import (
     POV_ELECTIVE_RATE,
     POV_FULL_RATE,
+    MealTier,
     get_meal_amounts,
+    gsa_meal_amounts,
     meal_tier_for_city,
+    meal_tier_for_county,
     mileage_object_code,
     mileage_rate,
     other_travel_object_code,
@@ -117,22 +120,83 @@ with tab_guided:
         )
 
         event_title = st.text_input("Event / meeting name", placeholder="AAAE ACT/BFI Innovation Event")
-        destination_city = st.text_input("Destination city", placeholder="Seattle")
 
-        # Auto-resolve county and meal tier
+        dest_col, lookup_col = st.columns([4, 1])
+        destination_city = dest_col.text_input("Destination city", placeholder="Seattle or Portland")
+        with lookup_col:
+            st.write("")
+            st.write("")
+            lookup_rates = st.button("Look up rates")
+
+        # Per diem state: resolved from geocoding or inferred from scope
+        meal_obj: MealTier = get_meal_amounts(68)
         tier_total = 68
         county_resolved = None
-        if destination_city:
+        dest_state = "WA"
+        rate_source = ""
+
+        if lookup_rates and destination_city:
+            with st.spinner("Looking up per diem rates…"):
+                details = geocode_details(destination_city)
+            if details:
+                dest_state = details.get("state_code", "WA")
+                county_auto = details.get("county", "")
+                st.session_state["_dest_details"] = details
+            else:
+                st.warning("Could not geocode destination. Rates set manually.")
+
+        if "_dest_details" in st.session_state and destination_city:
+            details = st.session_state["_dest_details"]
+            dest_state = details.get("state_code", "WA")
+            county_auto = details.get("county", "")
+
+            if dest_state == "WA" and scope_key == "in_state":
+                # Use OFM county-based rate
+                county_resolved = county_auto.lower() if county_auto else None
+                tier_total, county_from_map = meal_tier_for_city(destination_city)
+                if county_from_map:
+                    county_resolved = county_from_map
+                    tier_total = tier_total
+                elif county_resolved:
+                    tier_total = meal_tier_for_county(county_resolved)
+                meal_obj = get_meal_amounts(tier_total)
+                county_label = (county_resolved or county_auto or "unknown").title()
+                rate_source = f"OFM FY2026 – {county_label} County"
+                st.info(
+                    f"**{destination_city.title()}** → {county_label} County "
+                    f"→ **OFM rate ${tier_total}** "
+                    f"(B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f})"
+                )
+            else:
+                # Out-of-state or out-of-country: use GSA federal per diem
+                with st.spinner("Fetching GSA per diem…"):
+                    gsa = gsa_per_diem(details.get("city", destination_city), dest_state)
+                if gsa:
+                    tier_total = gsa["mie"]
+                    meal_obj = gsa_meal_amounts(tier_total)
+                    rate_source = gsa["source"]
+                    st.info(
+                        f"**{destination_city.title()}, {dest_state}** "
+                        f"→ **GSA M&IE ${tier_total}** "
+                        f"(B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f})  \n"
+                        f"Source: {rate_source}"
+                    )
+                else:
+                    st.warning("GSA rate lookup failed – using $68 default. Verify at gsa.gov/perdiem.")
+                    meal_obj = get_meal_amounts(68)
+        elif destination_city and not lookup_rates:
+            # Fast local lookup before geocode button is pressed
             tier_total, county_resolved = meal_tier_for_city(destination_city)
             meal_obj = get_meal_amounts(tier_total)
-            county_label = county_resolved.title() if county_resolved else "unknown county"
-            st.info(
-                f"**{destination_city.title()}** → {county_label} County → "
-                f"**meal tier ${tier_total}** "
-                f"(B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f})"
-                + ("" if county_resolved else
-                   "\n\n⚠️ County not recognized – using base $68 tier. Verify against OFM map.")
-            )
+            if scope_key == "in_state":
+                county_label = (county_resolved or "unknown").title()
+                rate_source = f"OFM FY2026 – {county_label} County (local lookup)"
+                st.info(
+                    f"**{destination_city.title()}** → {county_label} County "
+                    f"→ **OFM rate ${tier_total}** "
+                    f"(B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f})  \n"
+                    f"Click **Look up rates** to confirm county via geocoding."
+                )
 
         # Dates
         col_d1, col_d2 = st.columns(2)
@@ -285,9 +349,9 @@ with tab_guided:
     # Section 4 – Meals and lodging
     # -----------------------------------------------------------------------
     with st.expander("Section 4 – Meals and lodging", expanded=True):
-        meal_obj = get_meal_amounts(tier_total)
         subsistence_code = subsistence_object_code(is_overnight, scope_key)
-        st.caption(f"Meal tier: ${tier_total} (B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f})  |  Object code: **{subsistence_code}**")
+        rate_label = f"${tier_total}" + (f" – {rate_source}" if rate_source else "")
+        st.caption(f"Per diem: {rate_label}  |  B ${meal_obj.breakfast:.0f} / L ${meal_obj.lunch:.0f} / D ${meal_obj.dinner:.0f}  |  Object code: **{subsistence_code}**")
 
         st.markdown("**Which meals are you in travel status for?** (uncheck meals provided at no cost to you)")
 

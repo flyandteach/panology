@@ -41,6 +41,104 @@ def geocode(place: str) -> Optional[Tuple[float, float]]:
     return None
 
 
+def geocode_details(place: str) -> Optional[dict]:
+    """
+    Return a dict with lat, lon, city, county, state_code for a place name.
+    Uses Nominatim reverse-address lookup.
+    """
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": f"{place}, USA", "format": "json", "limit": 1,
+                    "countrycodes": "us", "addressdetails": 1},
+            headers=_HEADERS,
+            timeout=_TIMEOUT,
+        )
+        data = resp.json()
+        if data:
+            addr = data[0].get("address", {})
+            state_code = addr.get("ISO3166-2-lvl4", "").replace("US-", "")
+            return {
+                "lat": float(data[0]["lat"]),
+                "lon": float(data[0]["lon"]),
+                "city": addr.get("city") or addr.get("town") or addr.get("village") or place,
+                "county": addr.get("county", "").replace(" County", "").strip(),
+                "state_code": state_code,
+                "state_name": addr.get("state", ""),
+            }
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# GSA federal per diem lookup (out-of-state travel)
+# ---------------------------------------------------------------------------
+
+def gsa_per_diem(city: str, state_code: str, year: int = 2026) -> Optional[dict]:
+    """
+    Query the GSA per diem API and return {'mie': 68, 'lodging': 107, 'source': '...'}.
+    Falls back to state standard rate if city not found.
+    No API key required for personal/low-volume use.
+    """
+    # Normalize city: remove common suffixes, encode for URL
+    city_clean = city.strip().title()
+    state_up = state_code.upper()
+
+    def _parse(data: dict) -> Optional[dict]:
+        rates = data.get("rates", [])
+        if not rates:
+            return None
+        # Prefer non-standard (city-specific) rates over the state standard
+        best = None
+        for entry in rates:
+            for rate in entry.get("rate", []):
+                months = rate.get("months", {}).get("month", [])
+                if not months:
+                    continue
+                # Use the highest month value as the representative (or month 1)
+                mie_vals = [m.get("value", 0) for m in months if m.get("value")]
+                mie = max(mie_vals) if mie_vals else 0
+                if mie and (best is None or mie > best["mie"]):
+                    lodging_months = rate.get("months", {}).get("month", [])
+                    # lodging is separate in some versions
+                    best = {
+                        "mie": int(mie),
+                        "lodging": int(entry.get("rate", [{}])[0].get("value", 0) or 0),
+                        "source": f"GSA FY{year} {city_clean}, {state_up}",
+                    }
+        return best
+
+    # Try city-specific rate first
+    try:
+        url = f"https://api.gsa.gov/travel/perdiem/v2/rates/city/{city_clean}/state/{state_up}/year/{year}"
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        if resp.status_code == 200:
+            result = _parse(resp.json())
+            if result and result["mie"]:
+                return result
+    except Exception:
+        pass
+
+    # Fall back to state standard rate
+    try:
+        url = f"https://api.gsa.gov/travel/perdiem/v2/rates/state/{state_up}/year/{year}"
+        resp = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
+        if resp.status_code == 200:
+            data = resp.json()
+            meals = data.get("meals")
+            if meals:
+                return {
+                    "mie": int(meals),
+                    "lodging": 0,
+                    "source": f"GSA FY{year} {state_up} standard rate",
+                }
+    except Exception:
+        pass
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Polyline decoder (Google/OSRM encoded polyline format)
 # ---------------------------------------------------------------------------

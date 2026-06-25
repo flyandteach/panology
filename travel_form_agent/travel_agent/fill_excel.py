@@ -240,6 +240,22 @@ def _write_other_expenses(ws: OOXMLWorksheetEditor, items: List[OtherExpense]) -
     ws.set_cell("Q41", _currency(sum(x.amount for x in items[:6])))
 
 
+def _patch_content_types(xml_bytes: bytes, skip_paths: set) -> bytes:
+    """Remove Override entries for skipped parts so [Content_Types].xml stays consistent."""
+    CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+    ET.register_namespace("", CT_NS)
+    root = ET.fromstring(xml_bytes)
+    to_remove = []
+    for child in root:
+        part = child.attrib.get("PartName", "")
+        # PartName is absolute: /xl/calcChain.xml
+        if part.lstrip("/") in skip_paths or part in {f"/{p}" for p in skip_paths}:
+            to_remove.append(child)
+    for child in to_remove:
+        root.remove(child)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
 def fill_expense_voucher_xlsx(intake: TravelIntake, template_path: str | Path, output_path: str | Path) -> Path:
     template_path = Path(template_path)
     output_path = Path(output_path)
@@ -301,14 +317,18 @@ def fill_expense_voucher_xlsx(intake: TravelIntake, template_path: str | Path, o
 
         sheet_bytes = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # Skip calcChain.xml — after rewriting cells the cached chain is stale
-        # and causes Excel to refuse to open the file.
+        # Skip calcChain.xml — stale chain causes Excel to refuse to open the file.
+        # Also patch [Content_Types].xml to remove the Override entry for it;
+        # a Content_Types reference to a missing part is itself a fatal package error.
         _SKIP = {"xl/calcChain.xml"}
         with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
                 if item.filename in _SKIP:
                     continue
-                data = sheet_bytes if item.filename == sheet_path else zin.read(item.filename)
+                if item.filename == "[Content_Types].xml":
+                    data = _patch_content_types(zin.read(item.filename), _SKIP)
+                else:
+                    data = sheet_bytes if item.filename == sheet_path else zin.read(item.filename)
                 zi = zipfile.ZipInfo(item.filename, date_time=item.date_time)
                 zi.compress_type = zipfile.ZIP_DEFLATED
                 zi.external_attr = item.external_attr
