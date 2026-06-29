@@ -144,32 +144,28 @@ def get_meal_amounts(tier_total: int) -> MealTier:
 
 # ---------------------------------------------------------------------------
 # GSA M&IE meal splitter (out-of-state / out-of-country)
-# GSA publishes M&IE as a daily total; the breakdown below follows the
-# federal proportional split (B≈20%, L≈20%, D≈50%, incidentals≈10%).
-# Incidentals are NOT separately reimbursable on WSDOT forms.
+# WSDOT TPPM Section 3-3.E: when the GSA M&IE total matches a WA OFM tier,
+# use the OFM per-meal breakdown (e.g. $92 → B$24/L$27/D$41).
+# When the federal total does not match any OFM tier, apply the TPPM §3-3.E
+# proportional split: Breakfast 26%, Lunch 29%, Dinner 45%, rounded to nearest $1.
 # ---------------------------------------------------------------------------
 
-_GSA_MIE_TIERS: Dict[int, MealTier] = {
-    59:  MealTier(59.0,  13.00, 13.00, 23.00),   # incidentals $10
-    68:  MealTier(68.0,  15.00, 15.00, 28.00),   # incidentals $10
-    74:  MealTier(74.0,  16.00, 17.00, 31.00),   # incidentals $10
-    80:  MealTier(80.0,  18.00, 18.00, 34.00),   # incidentals $10
-    86:  MealTier(86.0,  19.00, 20.00, 37.00),   # incidentals $10
-    92:  MealTier(92.0,  21.00, 22.00, 39.00),   # incidentals $10
-    98:  MealTier(98.0,  22.00, 24.00, 42.00),   # incidentals $10
-    100: MealTier(100.0, 23.00, 24.00, 43.00),   # incidentals $10
-}
-
-
 def gsa_meal_amounts(mie_total: int) -> MealTier:
-    """Return meal split for a GSA M&IE total, closest tier match."""
-    if mie_total in _GSA_MIE_TIERS:
-        return _GSA_MIE_TIERS[mie_total]
-    # Proportional split: B 20%, L 20%, D 50%, incidentals 10%
-    b = round(mie_total * 0.20, 2)
-    l_ = round(mie_total * 0.20, 2)
-    d = round(mie_total - b - l_ - mie_total * 0.10, 2)
-    return MealTier(float(mie_total), b, l_, d)
+    """Return WSDOT-compliant meal split for a GSA M&IE total (TPPM §3-3.E).
+
+    If the federal total matches a WA OFM tier, use OFM per-meal amounts.
+    Otherwise apply the 26/29/45% TPPM proportional split.
+    """
+    if mie_total in MEAL_TIERS:
+        return MEAL_TIERS[mie_total]
+    # TPPM §3-3.E proportional split, rounded to nearest dollar
+    b  = round(mie_total * 0.26)
+    l_ = round(mie_total * 0.29)
+    d  = round(mie_total * 0.45)
+    # Assign any rounding remainder to dinner
+    remainder = mie_total - b - l_ - d
+    d += remainder
+    return MealTier(float(mie_total), float(b), float(l_), float(d))
 
 
 # ---------------------------------------------------------------------------
