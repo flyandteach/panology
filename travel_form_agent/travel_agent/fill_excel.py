@@ -37,11 +37,33 @@ def _excel_time(value) -> Optional[float]:
     return None
 
 
+def _resolve_cell(ws, cell_ref: str) -> str:
+    """Return the top-left cell of any merged range that contains cell_ref.
+
+    openpyxl raises AttributeError if you write to a non-top-left merged cell,
+    so we redirect all writes to the top-left of the merge instead.
+    """
+    from openpyxl.utils import range_boundaries
+    for merged in ws.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(str(merged))
+        col_letter = cell_ref.rstrip("0123456789")
+        row_num = int(cell_ref[len(col_letter):])
+        col_num = column_index_from_string(col_letter)
+        if min_col <= col_num <= max_col and min_row <= row_num <= max_row:
+            from openpyxl.utils import get_column_letter
+            return f"{get_column_letter(min_col)}{min_row}"
+    return cell_ref
+
+
 def _set(ws, cell_ref: str, value) -> None:
-    """Write a value to a cell, skipping None and empty string."""
+    """Write a value to a cell, skipping None and empty string.
+
+    Automatically redirects to the top-left cell if cell_ref falls inside
+    a merged range (openpyxl cannot write to non-top-left merged cells).
+    """
     if value is None or value == "":
         return
-    ws[cell_ref] = value
+    ws[_resolve_cell(ws, cell_ref)] = value
 
 
 # ---------------------------------------------------------------------------
