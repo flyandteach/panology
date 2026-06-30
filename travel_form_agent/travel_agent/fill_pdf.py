@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, Set
+from typing import Dict, Set
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import BooleanObject, NameObject
@@ -9,19 +9,19 @@ from pypdf.generic import BooleanObject, NameObject
 from .models import TravelIntake
 
 
+# ---------------------------------------------------------------------------
+# Field names verified from travel_request_template.pdf (Form 700-006)
+# Fields were identified by tooltip (Alt text) from the PDF's AcroForm.
+# ---------------------------------------------------------------------------
+
 def _currency(value: float) -> str:
-    return f"{value:.2f}" if value else "0"
+    return f"{value:.2f}" if value else ""
 
 
 def _plain(value) -> str:
     if value is None:
         return ""
     return str(value)
-
-
-def _field_names(reader: PdfReader) -> Set[str]:
-    fields = reader.get_fields() or {}
-    return set(fields.keys())
 
 
 def _set_need_appearances(writer: PdfWriter) -> None:
@@ -38,127 +38,124 @@ def _set_checkbox(writer: PdfWriter, field_name: str, checked: bool) -> None:
         annots = page.get("/Annots")
         if not annots:
             continue
-        for ref in annots.get_object() if hasattr(annots, "get_object") else annots:
+        for ref in (annots.get_object() if hasattr(annots, "get_object") else annots):
             annot = ref.get_object()
             if annot.get("/T") == field_name:
                 annot.update({NameObject("/V"): value, NameObject("/AS"): value})
 
 
 def build_travel_request_field_values(intake: TravelIntake, fields: Set[str]) -> Dict[str, str]:
-    """Build field values that support both the current and older WSDOT Aviation travel request templates."""
-    field_values: Dict[str, str] = {}
+    """Map TravelIntake to verified Form 700-006 field names."""
+    fv: Dict[str, str] = {}
 
     def put(name: str, value) -> None:
         if name in fields:
-            field_values[name] = _plain(value)
+            fv[name] = _plain(value)
 
-    put("Employee Traveling", intake.traveler.name)
-    put("Meeting/Training/Conf. event title:", intake.event_title)
-    put("MeetingTrainingConf event title", intake.event_title)
-    put("Destination City", intake.destination_city)
+    # ---------- Traveler / header ----------
+    put("NameOfEmployee", intake.traveler.name)
 
-    # Current template names
-    put("Departure Date/Time", intake.departure_datetime)
-    put("return date and time", intake.return_datetime)
-    put("conference/meeting date and time", intake.meeting_begin_datetime)
-    put("conference meeting end date and time", intake.meeting_end_datetime)
+    # ---------- Trip basics (page 1) ----------
+    # tooltip='Meeting/Training/Conference Event Title'
+    put("Text Field 168", intake.event_title)
+    # tooltip='Destination City/State'
+    put("Text Field 176", intake.destination_city)
+    # tooltip='Departure Date/Time'
+    put("Text Field 177", intake.departure_datetime)
+    # tooltip='Return Date/Time'
+    put("Text Field 178", intake.return_datetime)
+    # tooltip='Conference/Meeting begins Date/Time'
+    put("Text Field 179", intake.meeting_begin_datetime)
+    # tooltip='Conference/Meeting ends Date/Time'
+    put("Text Field 180", intake.meeting_end_datetime)
 
-    # Older template names observed in signed examples. The labels are ambiguous in that file, so this maps by visual label.
-    put("Return DateTime", intake.departure_datetime)
-    put("undefined_2", intake.return_datetime)
-    put("ConferenceMeeting ends DateTime", intake.meeting_begin_datetime)
-    put("undefined_3", intake.meeting_end_datetime)
+    # ---------- Estimated costs ----------
+    put("RegistrationFee", _currency(intake.registration_fee))
+    put("AirFare", _currency(intake.airfare))
 
-    put("Registration fee", _currency(intake.registration_fee))
-    put("reg. fee", _currency(intake.registration_fee))
-    put("Airfare", _currency(intake.airfare))
-    put("air fare rates", _currency(intake.airfare))
+    # Subsistence: days | per-day rate | total
+    if intake.subsistence_days is not None:
+        put("dayssubsistence", str(intake.subsistence_days))
+    if intake.subsistence_rate is not None:
+        put("dayssubsistenceamount", _currency(intake.subsistence_rate))
+    put("dayssubsistenceperday", _currency(intake.subsistence_total))
 
-    put("Days subsistence", "" if intake.subsistence_days is None else intake.subsistence_days)
-    put("sub days", "" if intake.subsistence_days is None else intake.subsistence_days)
-    put("Days subsistence at", "" if intake.subsistence_rate is None else intake.subsistence_rate)
-    put("sub rates", "" if intake.subsistence_rate is None else intake.subsistence_rate)
-    put("subsistaence total", _currency(intake.subsistence_total))
-    put("sub total", _currency(intake.subsistence_total))
+    # Lodging: days | per-night rate | total
+    if intake.lodging_days:
+        put("dayslodging", str(intake.lodging_days))
+    if intake.lodging_rate:
+        put("dayslodgingamount", _currency(intake.lodging_rate))
+    put("dayslodgingperday", _currency(intake.lodging_total))
 
-    put("Days Lodging", "" if intake.lodging_days is None else intake.lodging_days)
-    put("lodging days", "" if intake.lodging_days is None else intake.lodging_days)
-    put("Days lodging at", "" if intake.lodging_rate is None else intake.lodging_rate)
-    put("lodging rates", "" if intake.lodging_rate is None else intake.lodging_rate)
-    put("lodging total", _currency(intake.lodging_total))
+    # Mileage dollar total (vehiclemileage field holds the $ amount, not the mile count)
+    put("vehiclemileage", _currency(intake.mileage_total))
 
-    put("other fees", _currency(intake.other_fees_total_for_request))
-    put("estimated cost", _currency(intake.estimated_total))
-    put("estimated total", _currency(intake.estimated_total))
+    put("totalestimatedcost", _currency(intake.estimated_total))
 
-    put("Details Comments", intake.comments)
-    put("Section B Airline Train or Ferry details CommentsAccommodationsother relevant informationRow1", intake.comments)
-    put("other", intake.other_payment_method_description)
-    put("undefined", intake.other_payment_method_description)
+    # ---------- Justification / comments ----------
+    # tooltip='Justification and benefit to WSDOT:'
+    put("Text Field 173", intake.comments)
+    # tooltip='Flight and/or Rail Details…'
+    put("Text Field 128", intake.comments)
 
-    put("name of hotel", intake.hotel_name)
-    put("undefined_4", intake.hotel_name)
-    put("Name of Hotel City", intake.hotel_city)
-    put("City", intake.hotel_city)
+    # ---------- Hotel (page 2 lodging exception section) ----------
+    # tooltip='Name of Hotel/Motel'
+    put("Text Field 129", intake.hotel_name)
+    # tooltip='City'
+    put("Text Field 130", intake.hotel_city)
 
-    put("Traveler’s name", intake.traveler.name)
-    put("Print name", intake.traveler.name)
-    put("supervisor's name", intake.traveler.supervisor_name)
-    put("approving authority name", intake.traveler.approving_authority_name)
+    # ---------- Org / trip id ----------
+    # tooltip='Org Code'
+    put("Text Field 166", "")   # org_code from first account line if present
+    if intake.account_codes:
+        put("Text Field 166", intake.account_codes[0].org_code)
+
+    # ---------- Signatures / dates (page 2) ----------
     if intake.signature_date:
-        put("Date 1", intake.signature_date.strftime("%m/%d/%y"))
-        put("Date", intake.signature_date.strftime("%m/%d/%y"))
+        date_str = intake.signature_date.strftime("%m/%d/%y")
+        put("Text Field 136", date_str)   # traveler date
+        put("Text Field 137", date_str)   # supervisor date
+        put("Text Field 138", date_str)   # approving authority date
 
-    # Charge codes. Supports both the current long-coded version and older work-order layout.
-    for idx, account in enumerate(intake.account_codes[:6], start=1):
-        put(f"Cited Authority Fund Appropriation Object Unit Subunit Activity Function Work Op ProgramRow{idx}", account.cited_authority)
-        put(f"Fund {idx}", account.fund)
-        put(f"Appropriation {idx}", account.appropriation)
-        put(f"Object {idx}", account.object_code)
-        put(f"Unit {idx}", account.unit or account.org_code)
-        put(f"subunit {idx}", account.subunit)
-        put(f"activity {idx}", account.activity)
-        put(f"function {idx}", account.function or account.work_op)
-        put(f"program {idx}", account.program)
+    # tooltip='Traveler's Supervisor Printed Name'
+    put("Text Field 234", intake.traveler.supervisor_name)
+    # tooltip='Approving Authority Printed Name'
+    put("Text Field 235", intake.traveler.approving_authority_name)
 
-        put(f"Work OrderRow{idx}", account.work_order)
-        put(f"GroupRow{idx}", account.group)
-        put(f"Work OpRow{idx}", account.work_op)
-        put(f"Object CodeRow{idx}", account.object_code)
-        put(f"Org CodeRow{idx}", account.org_code)
-
-    return field_values
+    return fv
 
 
-def fill_travel_request_pdf(intake: TravelIntake, template_path: str | Path, output_path: str | Path) -> Path:
+def fill_travel_request_pdf(
+    intake: TravelIntake,
+    template_path: str | Path,
+    output_path: str | Path,
+) -> Path:
     template_path = Path(template_path)
     output_path = Path(output_path)
+
     reader = PdfReader(str(template_path))
     writer = PdfWriter()
     writer.append(reader)
     _set_need_appearances(writer)
 
-    fields = _field_names(reader)
+    fields = set((reader.get_fields() or {}).keys())
     values = build_travel_request_field_values(intake, fields)
     for page in writer.pages:
         writer.update_page_form_field_values(page, values)
 
-    method_map = {
-        "airline": ["Check Box2", "Airline travel"],
-        "airline travel": ["Check Box2", "Airline travel"],
-        "train": ["Check Box3", "TrainRailFerry"],
-        "rail": ["Check Box3", "TrainRailFerry"],
-        "ferry": ["Check Box3", "TrainRailFerry"],
-        "car rental": ["Check Box4", "Car Rental"],
-        "parking": ["Check Box5", "Parking"],
-        "other": ["Check Box6", "Other"],
-    }
+    # Transport method checkboxes (verified field names and tooltips)
     requested = {str(x).strip().lower() for x in intake.payment_methods}
-    for method, candidates in method_map.items():
-        checked = method in requested
-        for field_name in candidates:
-            if field_name in fields:
-                _set_checkbox(writer, field_name, checked)
+    checkbox_map = {
+        "Check Box 82": any(k in requested for k in ("airline", "airline travel")),
+        "Check Box 83": any(k in requested for k in ("car rental", "rental_car")),
+        "Check Box 86": any(k in requested for k in ("train", "rail", "ferry", "trainrailferry")),
+        "Check Box 87": any(k in requested for k in ("other", "mileage")),
+        # Always mark WSDOT Funded (standard for WSDOT employee travel)
+        "Check Box 96": True,
+    }
+    for field_name, checked in checkbox_map.items():
+        if field_name in fields:
+            _set_checkbox(writer, field_name, checked)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as f:
