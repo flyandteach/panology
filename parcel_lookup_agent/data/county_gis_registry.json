@@ -1,0 +1,9 @@
+{
+  "_readme": "Fallback registry, keyed by 5-digit county FIPS code. Used only when ArcGIS Online discovery (parcel_agent/discovery.py) finds nothing for a jurisdiction. Every entry is re-verified live (via describe_service) before use, so a stale or wrong URL just fails over to the next strategy rather than returning bad data. Populate this by finding the county's parcel FeatureServer URL (county open-data portal, or search https://www.arcgis.com for '<county> parcels') and adding an entry like the example below.",
+  "_example__do_not_use": {
+    "name": "Example County, ST",
+    "service_url": "https://services.arcgis.com/XXXXXXXXXXXXXXXX/ArcGIS/rest/services/Parcels/FeatureServer",
+    "layer_id": 0,
+    "notes": "Replace this with a real, verified entry. Remove the leading underscore only if you rename the key to a real FIPS code."
+  }
+}

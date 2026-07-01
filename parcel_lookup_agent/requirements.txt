@@ -1,0 +1,6 @@
+requests>=2.31
+streamlit>=1.32
+folium>=0.16
+streamlit-folium>=0.20
+pytest>=7.4
+anthropic>=0.25  # optional: only used for the LLM-assisted discovery fallback
