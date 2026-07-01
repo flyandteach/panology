@@ -139,53 +139,66 @@ class ParcelLookupAgent:
             return ParcelResult(found=False, geocode=geo, attempts=attempts,
                                  error="Could not geocode the address with any available strategy.")
 
+        result = self.lookup_at_point(geo.lat, geo.lon, county_name=geo.county_name, state_abbr=geo.state_abbr,
+                                       county_fips=geo.county_fips, attempts=attempts)
+        result.geocode = geo
+        if not result.found:
+            result.error = result.error or "Address geocoded successfully, but no parcel could be verified across all strategies."
+        return result
+
+    def lookup_at_point(self, lat: float, lon: float, county_name: str | None = None,
+                         state_abbr: str | None = None, county_fips: str | None = None,
+                         attempts: list[Attempt] | None = None) -> ParcelResult:
+        """Find the parcel at a known point, independent of how the point was obtained.
+
+        Used both by `lookup()` after geocoding an address, and directly by
+        callers (e.g. the PLSS/site-report pipeline) that already have
+        coordinates from some other source.
+        """
+        attempts = attempts if attempts is not None else []
+
         # Strategy 1: dynamic ArcGIS Online discovery.
         candidates = discovery.find_parcel_service_candidates(
-            county_name=geo.county_name, state_abbr=geo.state_abbr,
-            lat=geo.lat, lon=geo.lon, timeout=self.timeout,
+            county_name=county_name, state_abbr=state_abbr, lat=lat, lon=lon, timeout=self.timeout,
         )
         attempts.append(Attempt(strategy="discovery", detail=f"found {len(candidates)} candidate service(s)",
                                  success=bool(candidates)))
         for candidate in candidates[: self.max_candidates]:
-            result = _try_service(candidate["url"], geo.lon, geo.lat, "arcgis_online_discovery", attempts)
+            result = _try_service(candidate["url"], lon, lat, "arcgis_online_discovery", attempts)
             if result:
-                result.geocode = geo
-                result.county_name = geo.county_name
-                result.state_abbr = geo.state_abbr
+                result.county_name = county_name
+                result.state_abbr = state_abbr
                 return result
 
         # Strategy 2: curated fallback registry.
-        entry = registry.lookup_by_fips(geo.county_fips)
+        entry = registry.lookup_by_fips(county_fips)
         if entry:
-            result = _try_service(entry["service_url"], geo.lon, geo.lat, "curated_registry", attempts)
+            result = _try_service(entry["service_url"], lon, lat, "curated_registry", attempts)
             if result:
-                result.geocode = geo
-                result.county_name = geo.county_name
-                result.state_abbr = geo.state_abbr
+                result.county_name = county_name
+                result.state_abbr = state_abbr
                 return result
         else:
             attempts.append(Attempt(strategy="curated_registry",
-                                     detail=f"no entry for county FIPS {geo.county_fips}", success=False))
+                                     detail=f"no entry for county FIPS {county_fips}", success=False))
 
         # Strategy 3: LLM-suggested catalog roots, crawled and verified live.
-        roots = _llm_suggest_catalog_roots(geo.county_name, geo.state_abbr)
+        roots = _llm_suggest_catalog_roots(county_name, state_abbr)
         attempts.append(Attempt(strategy="llm_suggested_catalog", detail=f"{len(roots)} candidate root(s) suggested",
                                  success=bool(roots)))
         for root in roots:
             service_urls = arcgis_client.find_parcel_services_in_catalog(root, timeout=self.timeout)
             for service_url in service_urls[: self.max_candidates]:
-                result = _try_service(service_url, geo.lon, geo.lat, "llm_suggested_catalog", attempts)
+                result = _try_service(service_url, lon, lat, "llm_suggested_catalog", attempts)
                 if result:
-                    result.geocode = geo
-                    result.county_name = geo.county_name
-                    result.state_abbr = geo.state_abbr
+                    result.county_name = county_name
+                    result.state_abbr = state_abbr
                     return result
 
         return ParcelResult(
             found=False,
-            geocode=geo,
-            county_name=geo.county_name,
-            state_abbr=geo.state_abbr,
+            county_name=county_name,
+            state_abbr=state_abbr,
             attempts=attempts,
-            error="Address geocoded successfully, but no parcel could be verified across all strategies.",
+            error="No parcel could be verified across all strategies.",
         )

@@ -33,6 +33,78 @@ Every lookup returns a full attempt log, so when a parcel *isn't* found you
 can see exactly which strategies were tried and why they failed, rather than
 a bare "not found."
 
+## Site Report: PDF -> location -> parcel -> nearest airport(s)
+
+A second capability, on top of the same address-lookup pipeline: given a
+document (survey report, memo, title report) that describes a site by street
+address, PLSS legal description (e.g. `SW 1/4 Section 12, T33N, R21E, WM`),
+and/or a parcel number, extract that description, resolve it to coordinates,
+look up the parcel, and report the nearest public-use airport(s) with
+distances.
+
+1. **Extract** — pull text out of the PDF and find a labeled or
+   pattern-matched address, PLSS description, parcel number, and county/state
+   hint (`parcel_agent/pdf_ingest.py`).
+2. **Resolve to coordinates** — an address is geocoded via the same pipeline
+   as above. A PLSS description is resolved by querying the BLM's public PLSS
+   Cadastral Survey ArcGIS service for the Section's geometry
+   (`parcel_agent/plss.py`); if the description includes an aliquot part
+   (e.g. "SW 1/4"), the agent approximates that sub-parcel by geometrically
+   subdividing the Section's bounding box, since the national BLM layer only
+   carries geometry down to the Section level. **This is an approximation,
+   not a surveyed boundary** — fine for "how far to the nearest airport,"
+   not for legal boundary determination.
+3. **Look up the parcel** at the resolved point, reusing the same
+   discovery/registry pipeline as the address flow.
+4. **Find the nearest public-use airport(s)** (`parcel_agent/airports.py`),
+   with distances in both nautical miles and statute miles.
+
+A bare parcel number with no address or PLSS description isn't resolvable on
+its own (there's no way to know which county's parcel service to query) —
+that's reported explicitly rather than guessed.
+
+### Airport data: bundled snapshot vs. fallback
+
+FAA's own airport data has an explicit `Ownership`/`Facility Use` field
+(`PU` = public use, `PR` = private use), which matters here — the free
+`airportsdata` package used elsewhere in the Python ecosystem covers every
+landing area worldwide (private ranch strips included) with no public/private
+distinction.
+
+This repo ships `data/airports_public_use_snapshot.json` as an **empty
+placeholder**. To populate it with real, FAA-sourced, public-use-only data,
+run from a machine with normal internet access:
+
+```bash
+python -m parcel_agent.airports_refresh
+```
+
+This searches ArcGIS Online for FAA's published Airports feature service
+(rather than hardcoding a URL that could go stale), verifies it live, and
+writes only public-use records to the snapshot file. If discovery doesn't
+find the right service, pass it explicitly:
+
+```bash
+python -m parcel_agent.airports_refresh --service-url https://<...>/Airports/FeatureServer
+```
+
+Until you run this, nearest-airport results fall back to the `airportsdata`
+package and are clearly flagged in both the CLI and the UI as **not**
+verified public-use-only.
+
+### Run the site report from the command line
+
+```bash
+python -m parcel_agent.site_report_cli --pdf report.pdf
+```
+
+### Run the site report web page
+
+The Streamlit app is multipage — `streamlit run app.py` and use the sidebar
+to switch to **Site Report**, or go straight to `pages/1_Site_Report.py`.
+Upload a PDF, and the page shows the extracted fields, resolved location and
+parcel on a map, the nearest airports table, and a diagnostics panel.
+
 ## Installation
 
 ```bash
@@ -111,21 +183,38 @@ misses a jurisdiction-specific field name.
   bounding box; it is a heuristic, not a guarantee of picking the
   authoritative layer when a jurisdiction publishes multiple similarly
   named services.
+- PLSS aliquot-part (quarter-section, quarter-quarter) resolution is a
+  geometric approximation of the Section's bounding box, not a surveyed
+  boundary — see "Site Report" above.
+- Nearest-airport results are only verified public-use-only after you've run
+  `airports_refresh.py`; out of the box they use an unverified, worldwide
+  (not public-use-filtered) fallback dataset.
+- PDF text extraction depends on the PDF having a text layer; scanned
+  documents without OCR won't yield extractable text.
 
 ## Directory structure
 
 ```
 parcel_lookup_agent/
-  app.py                        # Streamlit UI
+  app.py                        # Streamlit UI: address lookup
+  pages/
+    1_Site_Report.py            # Streamlit UI: PDF -> location -> parcel -> nearest airports
   parcel_agent/
     agent.py                    # ParcelLookupAgent: multi-strategy orchestration
     geocode.py                  # Census + Nominatim geocoding chain
     discovery.py                # ArcGIS Online dynamic service discovery
     arcgis_client.py            # Generic ArcGIS REST client + field normalization
     registry.py                 # Curated fallback registry loader
-    models.py                   # GeocodeResult / ParcelResult / Attempt dataclasses
-    cli.py                      # Command-line entry point
+    plss.py                     # PLSS description parsing + BLM Cadastral resolution
+    pdf_ingest.py                # PDF text extraction + location extraction
+    airports.py                  # Nearest public-use-airport lookup
+    airports_refresh.py          # One-time/periodic FAA airport snapshot refresh
+    site_report.py                # Orchestrates PDF -> location -> parcel -> airports
+    models.py                    # Shared dataclasses
+    cli.py                        # Address-lookup CLI
+    site_report_cli.py            # Site-report CLI
   data/
-    county_gis_registry.json    # User-extensible fallback registry
-  tests/                        # Unit tests (mocked HTTP, no network required)
+    county_gis_registry.json     # User-extensible fallback parcel registry
+    airports_public_use_snapshot.json  # Populated by airports_refresh.py
+  tests/                          # Unit tests (mocked HTTP, no network required)
 ```

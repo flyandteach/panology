@@ -3,4 +3,6 @@ streamlit>=1.32
 folium>=0.16
 streamlit-folium>=0.20
 pytest>=7.4
+pypdf>=4.0
+airportsdata>=20240101  # fallback airport coordinates; see README re: public-use filtering
 anthropic>=0.25  # optional: only used for the LLM-assisted discovery fallback

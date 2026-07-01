@@ -114,6 +114,25 @@ def layer_url(service_url: str, layer_id: Any) -> str:
     return f"{base}/{layer_id}"
 
 
+def query_where(service_url: str, layer_id: Any, where: str,
+                 timeout: int = DEFAULT_TIMEOUT) -> list[dict]:
+    """Attribute-only spatial query. Returns a list of GeoJSON features."""
+    url = f"{layer_url(service_url, layer_id)}/query"
+    params = {
+        "where": where,
+        "outFields": "*",
+        "returnGeometry": "true",
+        "outSR": 4326,
+        "f": "geojson",
+    }
+    resp = requests.get(url, params=params, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict) and data.get("error"):
+        raise ArcGISError(str(data["error"]))
+    return data.get("features", [])
+
+
 def query_point(service_url: str, layer_id: Any, lon: float, lat: float,
                  timeout: int = DEFAULT_TIMEOUT) -> list[dict]:
     """Spatial point-in-polygon query. Returns a list of GeoJSON features."""

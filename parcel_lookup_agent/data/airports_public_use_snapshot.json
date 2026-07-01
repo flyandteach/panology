@@ -1,0 +1,7 @@
+{
+  "_readme": "Empty placeholder. Run `python -m parcel_agent.airports_refresh` from a machine with normal internet access to populate this with FAA's real public-use airport data. Until then, nearest-airport lookups fall back to the airportsdata PyPI package, which is NOT filtered to public-use facilities -- see README.",
+  "refreshed_at": null,
+  "source": null,
+  "public_use_filtered": false,
+  "airports": []
+}
