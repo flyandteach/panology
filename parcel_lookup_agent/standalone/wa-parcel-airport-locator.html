@@ -978,6 +978,43 @@ function renderAirportList(list, source) {
 /* ================= smart extraction: PLSS / lat-lon / parcel / address / context ================= */
 function trsStringPreview(t, td, r, rd, s) { let o = ""; if (s) o += "Sec " + s + ", "; return o + "T" + t + td + " R" + r + rd; }
 
+// Real permit/land-use documents routinely contain several addresses and/or
+// coordinate pairs that are NOT the project location: an applicant's mailing
+// address, an agent/consultant's office, a "send comments to" address, a
+// datum reference point, a corner-of-record. Classify each match by the
+// label text immediately preceding it so those can be deprioritized instead
+// of just offering everything found as an undifferentiated pile of choices.
+const _SITE_CONTEXT_PATTERNS = [
+  /site\s*address/i, /project\s*(?:location|address|site)/i, /property\s*address/i,
+  /subject\s*(?:property|site|parcel)/i, /location\s*of\s*(?:the\s*)?(?:proposal|project)/i,
+  /physical\s*address/i, /situs\s*address/i, /premises\s*address/i, /site\s*coordinates/i,
+];
+const _EXCLUDE_CONTEXT_PATTERNS = [
+  /applicant/i, /owner(?:'s)?\s*(?:mailing)?\s*address/i, /\bagent\b/i, /mailing\s*address/i,
+  /billing\s*address/i, /\bcontact\b/i, /attn\.?|attention/i, /send\s*(?:to|comments)/i,
+  /return\s*(?:to|address)/i, /\bconsultant\b/i, /represent(?:ative|ed\s*by)/i, /\bcontractor\b/i,
+];
+function classifyByContext(text, matchIndex) {
+  const start = Math.max(0, matchIndex - 120);
+  const window = text.slice(start, matchIndex);
+  if (_SITE_CONTEXT_PATTERNS.some(re => re.test(window))) return "site";
+  if (_EXCLUDE_CONTEXT_PATTERNS.some(re => re.test(window))) return "excluded";
+  return "unlabeled";
+}
+// Given a list of candidates each tagged with .rank ("site"/"unlabeled"/
+// "excluded"), keep only the best tier present rather than offering every
+// address/coordinate found indiscriminately. Falls through to a looser tier
+// only when the better tier is completely empty, so something is still
+// offered rather than nothing.
+function preferBestRanked(list) {
+  if (!list.length) return list;
+  const site = list.filter(c => c.rank === "site");
+  if (site.length) return site;
+  const unlabeled = list.filter(c => c.rank === "unlabeled");
+  if (unlabeled.length) return unlabeled;
+  return list;
+}
+
 function detectLatLonCandidates(text) {
   const out = [];
   const re1 = /(-?\d{1,3}\.\d{2,8})\s*[,\s]\s*(-?\d{1,3}\.\d{2,8})/g;
@@ -987,13 +1024,13 @@ function detectLatLonCandidates(text) {
     if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const t = lat; lat = lon; lon = t; }
     if (Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
     if (lon >= 100 && lon <= 180 && lat > 0) lon = -lon;
-    out.push({ type: "latlon", label: "Coordinates " + lat.toFixed(5) + ", " + lon.toFixed(5), lat, lon });
+    out.push({ type: "latlon", label: "Coordinates " + lat.toFixed(5) + ", " + lon.toFixed(5), lat, lon, rank: classifyByContext(text, m.index) });
   }
   const re2 = /(\d{1,3}(?:\.\d+)?)\s*°?\s*([NS])[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EW])/gi;
   while ((m = re2.exec(text)) !== null) {
     let lat = parseFloat(m[1]) * (m[2].toUpperCase() === "S" ? -1 : 1);
     let lon = parseFloat(m[3]) * (m[4].toUpperCase() === "W" ? -1 : 1);
-    out.push({ type: "latlon", label: "Coordinates " + lat.toFixed(5) + ", " + lon.toFixed(5), lat, lon });
+    out.push({ type: "latlon", label: "Coordinates " + lat.toFixed(5) + ", " + lon.toFixed(5), lat, lon, rank: classifyByContext(text, m.index) });
   }
   return out;
 }
@@ -1066,9 +1103,15 @@ function detectAddressCandidates(text) {
   let m;
   while ((m = re.exec(text)) !== null) {
     const cand = m[0].trim().replace(/\s+/g, " ");
-    if (!seen.has(cand)) { seen.add(cand); out.push({ type: "address", label: "Address: " + cand, text: cand }); }
+    if (!seen.has(cand)) {
+      seen.add(cand);
+      const rank = classifyByContext(text, m.index);
+      const suffix = rank === "site" ? " (labeled as site/project address)"
+        : rank === "excluded" ? " (looks like an applicant/mailing/contact address — verify)" : "";
+      out.push({ type: "address", label: "Address: " + cand + suffix, text: cand, rank });
+    }
   }
-  return out.slice(0, 3);
+  return out.slice(0, 6);
 }
 const _STREET_SUFFIX_RE = "(?:St(?:reet)?|Ave(?:nue)?|Rd|Road|Dr(?:ive)?|Ln|Lane|Blvd|Boulevard|Way|Ct|Court|Pl(?:ace)?|Hwy|Highway|Pkwy|Parkway|Cir(?:cle)?|Loop|Trl|Trail)";
 // Rural/undeveloped parcels are very often described by a street
@@ -1145,9 +1188,16 @@ function detectContext(text) {
 function detectCandidates(text) {
   if (!text || !text.trim()) return [];
   const plss = detectPLSSCandidates(text);
-  const latlon = detectLatLonCandidates(text);
+  // Addresses and coordinates are ranked by surrounding label context (see
+  // classifyByContext) and narrowed to the best tier found -- a labeled
+  // site/project address if one exists, otherwise unlabeled ones, only
+  // falling through to applicant/mailing/contact-labeled ones if that's
+  // literally all the document has. Without this, a document with both a
+  // project address and an applicant's mailing address would offer both
+  // with no indication of which one is actually the site.
+  const latlon = preferBestRanked(detectLatLonCandidates(text));
   const parcel = detectParcelCandidates(text);
-  const address = detectAddressCandidates(text);
+  const address = preferBestRanked(detectAddressCandidates(text));
   // Only look for an intersection description if no numbered address was
   // already found -- a numbered address is strictly more precise, and this
   // avoids offering a redundant/looser candidate alongside a good one.
@@ -1583,6 +1633,7 @@ if (typeof module !== "undefined" && module.exports) {
     detectLatLonCandidates, detectPLSSCandidates, detectParcelCandidates, detectAddressCandidates,
     detectIntersectionCandidates, detectBareNumberCandidate,
     detectCounty, detectCity, detectContext, detectCandidates,
+    classifyByContext, preferBestRanked,
     pickField, findFieldByPattern, looksPrivate, airportLabel, trsString, trsStringPreview,
   };
 }
