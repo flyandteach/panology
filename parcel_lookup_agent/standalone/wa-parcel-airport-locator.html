@@ -1070,6 +1070,33 @@ function detectAddressCandidates(text) {
   }
   return out.slice(0, 3);
 }
+const _STREET_SUFFIX_RE = "(?:St(?:reet)?|Ave(?:nue)?|Rd|Road|Dr(?:ive)?|Ln|Lane|Blvd|Boulevard|Way|Ct|Court|Pl(?:ace)?|Hwy|Highway|Pkwy|Parkway|Cir(?:cle)?|Loop|Trl|Trail)";
+// Rural/undeveloped parcels are very often described by a street
+// intersection ("Commercial Ave. and Dietrich Rd") rather than a numbered
+// address, which the numbered-address regex above can never match (it
+// requires a leading house number). Geocoders (Census/Nominatim) generally
+// understand "StreetA & StreetB, City, WA" queries fine, so this just needs
+// to recognize the pattern and hand the whole phrase to the same address
+// geocoding path -- no separate resolver required.
+// A fragment is either "<name> <suffix>" (Commercial Ave, Dietrich Rd) or
+// the bare numbered-road convention common around Pasco/Franklin County
+// ("Road 68", "Road 100").
+const _STREET_FRAGMENT_RE = "(?:Road\\s+\\d+|[A-Za-z0-9.'-]+(?:\\s+[A-Za-z0-9.'-]+){0,4}\\s+" + _STREET_SUFFIX_RE + ")";
+const _INTERSECTION_RE = new RegExp(
+  "(" + _STREET_FRAGMENT_RE + ")\\.?" +
+  "\\s+(?:and|&)\\s+" +
+  "(" + _STREET_FRAGMENT_RE + ")\\.?" +
+  "(?:\\s+in\\s+([A-Z][a-zA-Z]+(?:\\s[A-Z][a-zA-Z]+){0,2}))?",
+  "i",
+);
+function detectIntersectionCandidates(text) {
+  const m = text.match(_INTERSECTION_RE);
+  if (!m) return [];
+  const cityFromPhrase = m[3];
+  const city = cityFromPhrase || detectCity(text);
+  const query = m[1].trim() + " & " + m[2].trim() + (city ? ", " + city + ", WA" : ", WA");
+  return [{ type: "address", label: "Intersection: " + query, text: query }];
+}
 const WA_COUNTY_NAMES = [
   "Adams", "Asotin", "Benton", "Chelan", "Clallam", "Clark", "Columbia", "Cowlitz",
   "Douglas", "Ferry", "Franklin", "Garfield", "Grant", "Grays Harbor", "Island",
@@ -1101,8 +1128,16 @@ function detectCounty(text) {
   return null;
 }
 function detectCity(text) {
-  const m = text.match(/(?:[Cc]ity|[Tt]own)\s*(?:of)?\s*[:.]?\s*([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2})(?:\s*[,.\n]|$|\s+WA)/);
-  return m ? m[1].trim() : null;
+  const labeled = text.match(/(?:[Cc]ity|[Tt]own)\s*(?:of)?\s*[:.]?\s*([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2})(?:\s*[,.\n]|$|\s+WA)/);
+  if (labeled) return labeled[1].trim();
+  // No "City of"/"Town of" label -- fall back to the common plain
+  // "<Name>, WA" / "<Name>, Washington" convention (e.g. "...in Pasco, WA").
+  const trailing = text.match(/\b(?:in|near|at)?\s*([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2}),\s*(?:WA|Washington)\b/);
+  if (trailing) {
+    const c = trailing[1].trim();
+    if (!WA_COUNTY_NAMES.includes(c) && c.toLowerCase() !== "county") return c;
+  }
+  return null;
 }
 function detectContext(text) {
   return { county: detectCounty(text), city: detectCity(text) };
@@ -1113,7 +1148,11 @@ function detectCandidates(text) {
   const latlon = detectLatLonCandidates(text);
   const parcel = detectParcelCandidates(text);
   const address = detectAddressCandidates(text);
-  const cands = [...plss, ...latlon, ...parcel, ...address];
+  // Only look for an intersection description if no numbered address was
+  // already found -- a numbered address is strictly more precise, and this
+  // avoids offering a redundant/looser candidate alongside a good one.
+  const intersection = address.length ? [] : detectIntersectionCandidates(text);
+  const cands = [...plss, ...latlon, ...parcel, ...address, ...intersection];
   if (!cands.length) {
     // Nothing labeled/specific found. Try, in order of usefulness: a bare
     // unlabeled digit run (e.g. someone just pasted a parcel number with no
@@ -1542,6 +1581,7 @@ if (typeof module !== "undefined" && module.exports) {
     fmtDMS, ringStats, featureStats, haversineNM, bearingDeg, compassWord,
     parseAliquotTokens, aliquotBounds, aliquotLabel,
     detectLatLonCandidates, detectPLSSCandidates, detectParcelCandidates, detectAddressCandidates,
+    detectIntersectionCandidates, detectBareNumberCandidate,
     detectCounty, detectCity, detectContext, detectCandidates,
     pickField, findFieldByPattern, looksPrivate, airportLabel, trsString, trsStringPreview,
   };
