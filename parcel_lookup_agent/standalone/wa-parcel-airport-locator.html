@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WA Parcel &amp; Airport Locator</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75,400;75,600;75,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:   #F6F5F0;
+    --ink:     #22301F;
+    --line:    #D8D5C8;
+    --green:   #007B5F;
+    --plat-red:#C0392B;
+    --khaki:   #8A8468;
+    --white:   #FFFFFF;
+    --amber:   #B8860B;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--paper);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 10px 16px 9px;
+    background: var(--ink); color: var(--paper);
+    border-bottom: 3px solid var(--plat-red);
+    flex: 0 0 auto;
+  }
+  header h1 { font-size: 16px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  header .sub { font-family: var(--mono); font-size: 11px; color: #B9C4B0; }
+  header .spacer { flex: 1 1 auto; }
+  header .diagLink {
+    font-family: var(--mono); font-size: 10.5px; color: #B9C4B0;
+    background: none; border: 1px solid #47513f; padding: 4px 9px; cursor: pointer;
+  }
+  header .diagLink:hover { border-color: var(--paper); color: var(--paper); }
+
+  #wrap { flex: 1 1 auto; display: flex; min-height: 0; }
+  #panel {
+    width: 400px; flex: 0 0 400px;
+    background: var(--paper);
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+    padding: 14px 14px 24px;
+  }
+  #map { flex: 1 1 auto; min-width: 0; background: #DDE3D8; }
+
+  .sect-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--khaki);
+    margin: 16px 0 6px;
+  }
+  .sect-label:first-child { margin-top: 2px; }
+
+  #freeText {
+    width: 100%; padding: 9px 10px; resize: vertical;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+    border: 1.5px solid var(--ink); background: var(--white); color: var(--ink);
+    border-radius: 0;
+  }
+  #freeText:focus { outline: 2px solid var(--green); outline-offset: 1px; }
+  .hint { font-size: 11px; color: var(--khaki); margin-top: 5px; line-height: 1.45; }
+
+  .filerow { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .filerow label.filebtn {
+    font-family: var(--mono); font-size: 11px;
+    border: 1px dashed var(--khaki); padding: 6px 10px; cursor: pointer;
+    color: var(--ink); background: var(--white);
+  }
+  .filerow label.filebtn:hover { border-color: var(--ink); }
+  .filerow input[type=file] { display: none; }
+  #fileName { font-family: var(--mono); font-size: 10.5px; color: var(--khaki); }
+
+  .btnrow { display: flex; gap: 8px; margin-top: 10px; }
+  button.action {
+    flex: 1; padding: 9px 10px;
+    font-family: var(--sans); font-weight: 700; font-size: 13px;
+    letter-spacing: .05em; text-transform: uppercase;
+    border: 1.5px solid var(--ink); cursor: pointer; border-radius: 0;
+    background: var(--green); color: var(--white); border-color: var(--green);
+  }
+  button.action:hover { background: #00654E; border-color: #00654E; }
+  button.secondary { background: var(--white); color: var(--ink); border-color: var(--ink); }
+  button.secondary:hover { background: #ECEAE0; }
+  button:focus-visible { outline: 2px solid var(--plat-red); outline-offset: 2px; }
+  button:disabled { opacity: .5; cursor: wait; }
+
+  #status { margin-top: 10px; font-family: var(--mono); font-size: 11.5px; color: var(--plat-red); min-height: 16px; line-height: 1.4; }
+  #status.ok { color: var(--green); }
+  #status.warn { color: var(--amber); }
+  #debugUrl { display:none; margin-top:4px; }
+  #debugUrl a { font-family: var(--mono); font-size: 10.5px; color: var(--khaki); word-break: break-all; }
+
+  #candidates { display: none; margin-top: 10px; }
+  #candidates .cbtn {
+    display: block; width: 100%; text-align: left;
+    padding: 7px 9px; margin-bottom: 6px;
+    font-family: var(--mono); font-size: 11.5px;
+    border: 1px solid var(--ink); background: var(--white); cursor: pointer; border-radius: 0;
+  }
+  #candidates .cbtn .tag { color: var(--green); font-weight: 600; margin-right: 6px; text-transform: uppercase; }
+  #candidates .cbtn:hover { background: var(--paper); }
+
+  #context { display: none; margin-top: 10px; font-family: var(--mono); font-size: 11px; color: var(--khaki); line-height: 1.6; border-left: 2px solid var(--line); padding-left: 8px; }
+  #context b { color: var(--ink); }
+
+  details.manual { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 10px; }
+  details.manual > summary { cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--khaki); }
+  .manual-field { margin-top: 8px; }
+  .manual-field label { display:block; font-family: var(--mono); font-size: 10px; color: var(--ink); margin-bottom: 3px; }
+  .manual-inline { display: flex; gap: 6px; }
+  .manual-inline input { flex: 1; padding: 7px 8px; font-family: var(--mono); font-size: 12px; border: 1px solid var(--ink); background: var(--white); border-radius: 0; }
+  .manual-inline button { padding: 7px 10px; font-family: var(--sans); font-weight: 700; font-size: 11px; border: 1px solid var(--ink); background: var(--white); cursor: pointer; }
+  .manual-inline button:hover { background: var(--paper); }
+  .trs-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .field label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .08em; color: var(--ink); margin-bottom: 3px; }
+  .field input, .field select { width: 100%; padding: 7px 8px; font-family: var(--mono); font-size: 13px; border: 1px solid var(--ink); background: var(--white); color: var(--ink); border-radius: 0; }
+  .dirpair { display: flex; }
+  .dirpair input { border-right: none; width: 60%; }
+  .dirpair select { width: 40%; }
+  .aliquot-row { margin-top: 8px; }
+  .aliquot-row input { width: 100%; padding: 7px 8px; font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--ink); background: var(--white); border-radius: 0; }
+
+  #result { display: none; margin-top: 14px; }
+  .stamp { border: 2px solid var(--ink); background: var(--white); box-shadow: 4px 4px 0 var(--line); margin-bottom: 12px; }
+  .stamp-head { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--ink); background: var(--paper); }
+  .stamp-head .tag { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--khaki); }
+  .stamp-body { padding: 12px 10px; }
+  .legal { font-family: var(--mono); font-weight: 600; font-size: 14px; line-height: 1.35; word-break: break-word; }
+  .fact { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 11.5px; margin-top: 6px; }
+  .fact .k { color: var(--khaki); }
+  .fact .v { text-align: right; word-break: break-all; }
+  .stamp-links { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 10px 10px; border-top: 1px dashed var(--line); }
+  .stamp-links a, .stamp-links button.mini {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--green); background: none; border: 1px solid var(--green);
+    padding: 4px 8px; text-decoration: none; cursor: pointer; border-radius: 0;
+  }
+  .stamp-links a:hover, .stamp-links button.mini:hover { background: var(--green); color: var(--white); }
+  .approx-note { font-size: 10.5px; color: var(--khaki); padding: 0 10px 10px; line-height: 1.4; }
+
+  .airport-row { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11.5px; }
+  .airport-row:last-child { border-bottom: none; }
+  .airport-row .rank { color: var(--plat-red); font-weight: 700; width: 16px; flex: 0 0 auto; }
+  .airport-row .name { flex: 1 1 auto; min-width: 0; }
+  .airport-row .dist { flex: 0 0 auto; text-align: right; color: var(--khaki); }
+  #airportSourceNote { font-size: 10.5px; color: var(--khaki); padding: 0 10px 10px; line-height: 1.4; }
+
+  footer.attrib { font-size: 10px; color: var(--khaki); margin-top: 18px; line-height: 1.5; }
+
+  .leaflet-container { font-family: var(--sans); }
+  .map-toolbar { background: var(--white); border: 1.5px solid var(--ink); box-shadow: 3px 3px 0 rgba(34,48,31,.25); }
+  .map-toolbar button { display: block; width: 100%; text-align: left; padding: 6px 10px; font-family: var(--mono); font-size: 11px; background: none; border: none; border-bottom: 1px solid var(--line); cursor: pointer; color: var(--ink); }
+  .map-toolbar button:last-child { border-bottom: none; }
+  .map-toolbar button.on { background: var(--ink); color: var(--paper); }
+  .seclabel { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--plat-red); text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; white-space: nowrap; }
+  .airportnum { font-family: var(--mono); font-weight: 700; font-size: 11px; color: var(--white); background: var(--green); border-radius: 50%; width: 18px; height: 18px; display:flex; align-items:center; justify-content:center; transform: translate(-50%,-50%); box-shadow: 0 0 0 1.5px var(--ink); }
+
+  /* ---------- diagnostics modal ---------- */
+  #diagOverlay { display: none; position: fixed; inset: 0; background: rgba(34,48,31,.55); z-index: 3000; align-items: center; justify-content: center; }
+  #diagOverlay.open { display: flex; }
+  #diagBox { width: min(640px, 92vw); max-height: 84vh; overflow-y: auto; background: var(--white); border: 2px solid var(--ink); box-shadow: 6px 6px 0 var(--line); }
+  #diagBox .stamp-head { position: sticky; top: 0; }
+  #diagBox .stamp-body { padding: 14px 16px; }
+  #diagBox .hint { margin-bottom: 10px; }
+  .diag-row { border: 1px solid var(--line); margin-bottom: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 11.5px; }
+  .diag-row .dname { font-weight: 700; }
+  .diag-row .dstatus { float: right; }
+  .diag-row .dstatus.ok { color: var(--green); }
+  .diag-row .dstatus.fail { color: var(--plat-red); }
+  .diag-row .dstatus.pending { color: var(--khaki); }
+  .diag-row .ddetail { margin-top: 4px; color: var(--khaki); word-break: break-word; }
+  .diag-row .ddetail a { color: var(--khaki); }
+  #diagCloseBtn { float: right; }
+
+  @media (max-width: 760px) {
+    #wrap { flex-direction: column; }
+    #panel { width: 100%; flex: 0 0 auto; max-height: 55vh; border-right: none; border-bottom: 2px solid var(--ink); }
+    #map { flex: 1 1 auto; min-height: 40vh; }
+    header h1 { font-size: 13px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WA Parcel &amp; Airport Locator</h1>
+  <span class="sub">PLSS &middot; Parcels &middot; Address &middot; Public-use airports</span>
+  <span class="spacer"></span>
+  <button class="diagLink" id="openDiagBtn" type="button">Run diagnostics</button>
+</header>
+
+<div id="wrap">
+  <aside id="panel">
+
+    <div class="sect-label">Project location input</div>
+    <textarea id="freeText" rows="6" spellcheck="false"
+      placeholder="Paste anything describing the project location: a legal description (T18N R18E Sec 34), a tax parcel number, a street address, or lat/lon coordinates. You can paste a whole paragraph or memo &mdash; the tool pulls the location out of it, using county/city mentions as context if nothing more specific is found."></textarea>
+    <div class="filerow">
+      <label class="filebtn" for="fileInput">Upload document (.pdf .docx .txt .csv)</label>
+      <input type="file" id="fileInput" accept=".txt,.csv,.pdf,.docx">
+      <span id="fileName"></span>
+    </div>
+    <div class="hint">Works with lines in any order, county/city names mixed in, or a plain "lat, lon" pair.</div>
+
+    <div class="btnrow">
+      <button class="action" id="analyzeBtn">Analyze &amp; Locate</button>
+      <button class="action secondary" id="gpsBtn" title="Use device GPS">My position</button>
+    </div>
+    <div class="btnrow">
+      <button class="action secondary" id="clearBtn">Clear map</button>
+    </div>
+    <div id="status" role="status"></div>
+    <div id="debugUrl"><a id="debugUrlLink" href="#" target="_blank" rel="noopener">Open raw query in a new tab &rarr;</a></div>
+
+    <div id="candidates"></div>
+    <div id="context"></div>
+
+    <details class="manual">
+      <summary>Manual entry (advanced)</summary>
+
+      <div class="manual-field">
+        <label>Lat, Lon</label>
+        <div class="manual-inline">
+          <input id="manLatLon" type="text" placeholder="47.62, -120.55">
+          <button id="manLatLonGo" type="button">Go</button>
+        </div>
+      </div>
+      <div class="manual-field">
+        <label>Tax parcel number</label>
+        <div class="manual-inline">
+          <input id="manParcel" type="text" placeholder="e.g. 2038010000001">
+          <button id="manParcelGo" type="button">Go</button>
+        </div>
+      </div>
+      <div class="manual-field">
+        <label>Street address</label>
+        <div class="manual-inline">
+          <input id="manAddr" type="text" placeholder="123 Main St, Ellensburg, WA">
+          <button id="manAddrGo" type="button">Go</button>
+        </div>
+      </div>
+      <div class="manual-field">
+        <label>City / County (fallback locate, no address needed)</label>
+        <div class="manual-inline">
+          <input id="manCityCounty" type="text" placeholder="Ephrata, Grant County">
+          <button id="manCityCountyGo" type="button">Go</button>
+        </div>
+      </div>
+
+      <div class="sect-label">Township &ndash; Range &ndash; Section</div>
+      <div class="trs-grid">
+        <div class="field">
+          <label for="twp">Township</label>
+          <div class="dirpair">
+            <input id="twp" type="number" min="1" max="41" inputmode="numeric" placeholder="2">
+            <select id="twpDir"><option>N</option><option>S</option></select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="rng">Range</label>
+          <div class="dirpair">
+            <input id="rng" type="number" min="1" max="47" inputmode="numeric" placeholder="4">
+            <select id="rngDir"><option>E</option><option>W</option></select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="sec">Section</label>
+          <input id="sec" type="number" min="1" max="36" inputmode="numeric" placeholder="1&ndash;36">
+        </div>
+      </div>
+      <div class="aliquot-row field">
+        <label for="aliquot">Aliquot part (optional)</label>
+        <input id="aliquot" type="text" spellcheck="false" placeholder="e.g. SW1/4 NE1/4 or N1/2">
+      </div>
+      <div class="btnrow">
+        <button class="action secondary" id="trsGoBtn" type="button">Locate PLSS</button>
+      </div>
+    </details>
+
+    <div id="result">
+      <div class="sect-label">Result</div>
+      <div class="stamp">
+        <div class="stamp-head"><span class="tag" id="stampTag">Location</span><span class="tag" id="stampTag2"></span></div>
+        <div class="stamp-body">
+          <div class="legal" id="legalOut"></div>
+          <div class="fact"><span class="k">County</span><span class="v" id="countyOut">&ndash;</span></div>
+          <div class="fact"><span class="k">Centroid</span><span class="v" id="centroidOut">&ndash;</span></div>
+          <div class="fact"><span class="k">DMS</span><span class="v" id="dmsOut">&ndash;</span></div>
+          <div class="fact"><span class="k">Approx area</span><span class="v" id="areaOut">&ndash;</span></div>
+        </div>
+        <div class="stamp-links" id="linksRow">
+          <button class="mini" id="copyLegal" type="button">Copy label</button>
+          <button class="mini" id="copyCoord" type="button">Copy coords</button>
+          <a id="lnkGmap" href="#" target="_blank" rel="noopener">Google Maps</a>
+        </div>
+        <div class="approx-note" id="aliquotNote" style="display:none">Aliquot outline is computed geometrically from the section envelope and is approximate. Verify against a recorded survey for legal use.</div>
+      </div>
+
+      <div class="sect-label" id="airportListLabel" style="display:none">Nearest public-use airports</div>
+      <div class="stamp" id="airportStamp" style="display:none">
+        <div class="stamp-body" id="airportList"></div>
+        <div id="airportSourceNote"></div>
+      </div>
+    </div>
+
+    <footer class="attrib">
+      PLSS geometry: WA DNR public cadastre service, with a nationwide BLM cadastral fallback. Parcel geometry: Washington State Parcels Project (statewide) with per-county ArcGIS Online fallback. Address geocoding: U.S. Census Bureau geocoder with OpenStreetMap Nominatim fallback. Airport data: WSDOT non-military airports service, filtered to public-use client-side, with ArcGIS Online and static-list fallbacks. All data provided as-is; not a substitute for a recorded survey or official airspace data. Use "Run diagnostics" (top right) if lookups aren't working.
+    </footer>
+  </aside>
+
+  <div id="map"></div>
+</div>
+
+<div id="diagOverlay">
+  <div id="diagBox">
+    <div class="stamp-head">
+      <span class="tag">Service diagnostics</span>
+      <button id="diagCloseBtn" class="mini" type="button" style="border:1px solid var(--ink);color:var(--ink);">Close</button>
+    </div>
+    <div class="stamp-body">
+      <div class="hint">Tests each data source this tool depends on with a real request and reports pass/fail. If something fails, open its raw query link directly in a new tab &mdash; the browser will show the actual error (service moved, CORS block, etc.) which is far more diagnostic than anything JavaScript can see.</div>
+      <button class="action" id="runDiagBtn" type="button" style="width:100%;margin-bottom:10px;">Run diagnostics</button>
+      <div id="diagResults"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+"use strict";
+/* ================= service endpoints (primary + fallback chains) ================= */
+const DNR_SVC   = "https://gis.dnr.wa.gov/site3/rest/services/Public_Boundaries/WADNR_PUBLIC_Cadastre_OpenData/MapServer";
+const SEC_Q      = DNR_SVC + "/7/query";
+const CNTY_Q     = DNR_SVC + "/11/query";
+const EXPORT_URL = DNR_SVC + "/export";
+// Nationwide fallback if the WA DNR service is unreachable (moved/renamed/CORS-blocked).
+// Same PLSS grid (Willamette Meridian), federally maintained, different field schema.
+const BLM_PLSS_SVC = "https://gis.blm.gov/arcgis/rest/services/Cadastral/BLM_Natl_PLSS_CadNSDI/MapServer";
+
+const WSDOT_AIRPORTS_PRIMARY = "https://data.wsdot.wa.gov/arcgis/rest/services/Shared/AviationData/MapServer/0/query";
+const WSDOT_AIRPORTS_LEGACY  = "https://data.wsdot.wa.gov/arcgis/rest/services/Shared/Airports/MapServer/0/query";
+
+const WA_PARCELS_PRIMARY = "https://services.arcgis.com/jsIt88o09Q0r1j8h/arcgis/rest/services/Current_Parcels/FeatureServer/0/query";
+
+const CENSUS_GEOCODE_JSONP = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress";
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const ARCGIS_ONLINE_SEARCH = "https://www.arcgis.com/sharing/rest/search";
+
+const SEC_FIELDS = "PLS_TWP_NO,PLS_TWP_DIR_CD,PLS_RNG_NO,PLS_RNG_DIR_CD,PLS_TWP_SUBDIV_NO,PLS_TWP_SUBDIV_TYPE_CD,LEGAL_DESC_LABEL_NM,LEGAL_DESC_NM";
+
+// Small last-resort seed list, used only if every live airport source fails.
+// Curated from public FAA/WSDOT listings; NOT guaranteed current -- always
+// prefer a live source. See looksPrivate() for the public-use filter applied
+// to every source including this one.
+const WA_AIRPORTS_SEED = [
+  {id:"SEA",name:"Seattle-Tacoma International",lat:47.4502,lon:-122.3088,city:"SeaTac"},
+  {id:"GEG",name:"Spokane International",lat:47.6198,lon:-117.5336,city:"Spokane"},
+  {id:"PAE",name:"Snohomish County (Paine Field)",lat:47.9063,lon:-122.2817,city:"Everett"},
+  {id:"BLI",name:"Bellingham International",lat:48.7927,lon:-122.5375,city:"Bellingham"},
+  {id:"BFI",name:"King County International (Boeing Field)",lat:47.53,lon:-122.302,city:"Seattle"},
+  {id:"RNT",name:"Renton Municipal",lat:47.4931,lon:-122.216,city:"Renton"},
+  {id:"OLM",name:"Olympia Regional",lat:46.9694,lon:-122.9025,city:"Olympia"},
+  {id:"ALW",name:"Walla Walla Regional",lat:46.0949,lon:-118.288,city:"Walla Walla"},
+  {id:"YKM",name:"Yakima Air Terminal",lat:46.5682,lon:-120.544,city:"Yakima"},
+  {id:"EAT",name:"Pangborn Memorial",lat:47.3986,lon:-120.2069,city:"Wenatchee"},
+  {id:"PSC",name:"Tri-Cities Airport",lat:46.2647,lon:-119.119,city:"Pasco"},
+  {id:"PUW",name:"Pullman-Moscow Regional",lat:46.7439,lon:-117.1096,city:"Pullman"},
+  {id:"SFF",name:"Felts Field",lat:47.6828,lon:-117.3225,city:"Spokane"},
+  {id:"SHN",name:"Sanderson Field",lat:46.9741,lon:-123.1466,city:"Shelton"},
+  {id:"TIW",name:"Tacoma Narrows",lat:47.268,lon:-122.578,city:"Tacoma"},
+  {id:"AWO",name:"Arlington Municipal",lat:48.1607,lon:-122.1589,city:"Arlington"},
+  {id:"S50",name:"Auburn Municipal",lat:47.3215,lon:-122.228,city:"Auburn"},
+  {id:"PLU",name:"Pierce County/Thun Field",lat:47.1039,lon:-122.287,city:"Puyallup"},
+  {id:"CLM",name:"William R. Fairchild International",lat:48.1202,lon:-123.4997,city:"Port Angeles"},
+  {id:"MWH",name:"Grant County International",lat:47.2077,lon:-119.32,city:"Moses Lake"},
+  {id:"EPH",name:"Ephrata Municipal",lat:47.3076,lon:-119.5159,city:"Ephrata"},
+  {id:"ELN",name:"Bowers Field",lat:47.0333,lon:-120.5307,city:"Ellensburg"},
+  {id:"FHR",name:"Friday Harbor",lat:48.5220,lon:-123.0244,city:"Friday Harbor"},
+  {id:"CLS",name:"Chehalis-Centralia",lat:46.6768,lon:-122.9831,city:"Chehalis"},
+  {id:"HQM",name:"Bowerman",lat:46.9712,lon:-123.9366,city:"Hoquiam"},
+];
+
+const NOMINATIM_USER_AGENT_NOTE = "WA Parcel & Airport Locator/1.0";
+
+/* ================= generic helpers ================= */
+const $ = id => document.getElementById(id);
+
+function fmtDMS(dd, isLat) {
+  const hemi = isLat ? (dd >= 0 ? "N" : "S") : (dd >= 0 ? "E" : "W");
+  const a = Math.abs(dd);
+  const d = Math.floor(a), mFull = (a - d) * 60, m = Math.floor(mFull), s = ((mFull - m) * 60).toFixed(1);
+  return d + "°" + String(m).padStart(2, "0") + "'" + String(s).padStart(4, "0") + '"' + hemi;
+}
+
+function ringStats(coords) {
+  let A = 0, cx = 0, cy = 0;
+  for (let i = 0, n = coords.length - 1; i < n; i++) {
+    const [x1, y1] = coords[i], [x2, y2] = coords[i + 1];
+    const f = x1 * y2 - x2 * y1;
+    A += f; cx += (x1 + x2) * f; cy += (y1 + y2) * f;
+  }
+  A /= 2;
+  if (Math.abs(A) < 1e-12) { const p = coords[0]; return { c: [p[0], p[1]], areaDeg: 0 }; }
+  return { c: [cx / (6 * A), cy / (6 * A)], areaDeg: Math.abs(A) };
+}
+
+function featureStats(geom) {
+  let best = null, totalAcres = 0;
+  const polys = geom.type === "MultiPolygon" ? geom.coordinates : [geom.coordinates];
+  polys.forEach(rings => {
+    const outer = rings[0];
+    const s = ringStats(outer);
+    const latMid = s.c[1] * Math.PI / 180;
+    const mPerDegLat = 111320, mPerDegLon = 111320 * Math.cos(latMid);
+    const areaM2 = s.areaDeg * mPerDegLat * mPerDegLon;
+    totalAcres += areaM2 / 4046.8564224;
+    if (!best || s.areaDeg > best.areaDeg) best = { ...s };
+  });
+  return { lat: best.c[1], lon: best.c[0], acres: totalAcres };
+}
+
+function haversineNM(lat1, lon1, lat2, lon2) {
+  const R_NM = 3440.065, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R_NM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+  const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+const COMPASS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+function compassWord(deg) { return COMPASS[Math.round(deg / 22.5) % 16]; }
+
+let lastQueryUrl = "";
+async function arcQuery(url, params, timeoutMs) {
+  const usp = new URLSearchParams({ f: "geojson", outSR: "4326", returnGeometry: "true", ...params });
+  const fullUrl = url + "?" + usp.toString();
+  lastQueryUrl = fullUrl;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs || 20000);
+  try {
+    const res = await fetch(fullUrl, { signal: controller.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+    return j;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function arcDescribe(rootUrl, timeoutMs) {
+  const url = rootUrl.replace(/\/query$/, "").replace(/\/$/, "") + "?f=json";
+  lastQueryUrl = url;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs || 15000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+    return j;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function isNetworkError(err) {
+  return err instanceof TypeError || (err && err.name === "AbortError");
+}
+function netHint(err) {
+  return isNetworkError(err)
+    ? " This looks like a network/CORS block or timeout rather than a bad query — try \"Run diagnostics\" (top right)."
+    : "";
+}
+
+/* ================= field helpers ================= */
+function pickField(props, candidates) {
+  const keys = Object.keys(props || {});
+  for (const c of candidates) {
+    const hit = keys.find(k => k.toLowerCase() === c.toLowerCase());
+    if (hit && props[hit] !== null && props[hit] !== undefined && props[hit] !== "") return props[hit];
+  }
+  return null;
+}
+function findFieldByPattern(fieldNames, patterns) {
+  for (const pat of patterns) {
+    const re = new RegExp(pat, "i");
+    const hit = fieldNames.find(n => re.test(n));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/* ================= geocoding: Census JSONP primary, Nominatim fallback ================= */
+function censusGeocodeJSONP(address, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const cbName = "__censusCb" + Math.random().toString(36).slice(2);
+    const script = document.createElement("script");
+    const timer = setTimeout(() => { cleanup(); reject(new Error("Census geocoder timed out")); }, timeoutMs || 12000);
+    function cleanup() { clearTimeout(timer); delete window[cbName]; if (script.parentNode) script.parentNode.removeChild(script); }
+    window[cbName] = (data) => { cleanup(); resolve(data); };
+    const url = CENSUS_GEOCODE_JSONP + "?address=" + encodeURIComponent(address) + "&benchmark=Public_AR_Current&format=jsonp&callback=" + cbName;
+    lastQueryUrl = url;
+    script.src = url;
+    script.onerror = () => { cleanup(); reject(new Error("Census geocoder request failed to load (script error)")); };
+    document.body.appendChild(script);
+  });
+}
+async function geocodeNominatim(query, timeoutMs) {
+  const url = NOMINATIM_URL + "?" + new URLSearchParams({ format: "json", q: query, countrycodes: "us", limit: 3 }).toString();
+  lastQueryUrl = url;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs || 15000);
+  try {
+    const res = await fetch(url, { headers: { "Accept": "application/json" }, signal: controller.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (!data.length) return null;
+    const wa = data.find(d => d.display_name && d.display_name.includes("Washington"));
+    const best = wa || data[0];
+    return { lat: parseFloat(best.lat), lon: parseFloat(best.lon), display: best.display_name, source: "nominatim" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function geocodeAddress(addressText) {
+  try {
+    const data = await censusGeocodeJSONP(addressText);
+    const matches = data && data.result && data.result.addressMatches;
+    if (matches && matches.length) {
+      const m = matches[0];
+      return { lat: m.coordinates.y, lon: m.coordinates.x, display: m.matchedAddress || addressText, source: "census" };
+    }
+  } catch (err) {
+    // fall through to Nominatim; Census JSONP can fail if the endpoint
+    // changes shape or the request is malformed, not necessarily CORS.
+  }
+  return await geocodeNominatim(addressText.includes("WA") || addressText.toLowerCase().includes("washington")
+    ? addressText : addressText + ", WA");
+}
+
+/* ================= aliquot geometry (approximate) ================= */
+const QUARTERS = { NE: [0.5, 0.5, 1, 1], NW: [0, 0.5, 0.5, 1], SE: [0.5, 0, 1, 0.5], SW: [0, 0, 0.5, 0.5] };
+const HALVES   = { N: [0, 0.5, 1, 1], S: [0, 0, 1, 0.5], E: [0.5, 0, 1, 1], W: [0, 0, 0.5, 1] };
+function parseAliquotTokens(text) {
+  if (!text) return [];
+  const toks = [];
+  const re = /\b(NE|NW|SE|SW)\s*(?:1\s*\/\s*4|¼)?\b|\b([NSEW])\s*(?:1\s*\/\s*2|½)\b/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) toks.push(m[1].toUpperCase());
+    else toks.push(m[2].toUpperCase() + "2");
+  }
+  if (!toks.length) {
+    const c = text.trim().toUpperCase().match(/^((?:NE|NW|SE|SW){1,4})$/);
+    if (c) for (let i = 0; i < c[1].length; i += 2) toks.push(c[1].slice(i, i + 2));
+  }
+  return toks;
+}
+function aliquotBounds(sectionBoundsArr, tokens) {
+  // sectionBoundsArr: [west, south, east, north]
+  let [w, s, e, n] = sectionBoundsArr;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const t = tokens[i];
+    const box = t.length === 2 && HALVES[t[0]] && t[1] === "2" ? HALVES[t[0]] : QUARTERS[t];
+    if (!box) continue;
+    const [x0, y0, x1, y1] = box;
+    const nw2 = w + (e - w) * x0, ns2 = s + (n - s) * y0, ne2 = w + (e - w) * x1, nn2 = s + (n - s) * y1;
+    w = nw2; s = ns2; e = ne2; n = nn2;
+  }
+  return [w, s, e, n];
+}
+function aliquotLabel(tokens) { return tokens.map(t => (t.length === 2 && t[1] === "2") ? t[0] + "1/2" : t + "1/4").join(" "); }
+
+/* ================= PLSS resolver: WA DNR primary, BLM nationwide fallback ================= */
+function trsString(t, td, r, rd, s) { let out = ""; if (s) out += "Sec. " + s + ", "; return out + "T" + t + td + ", R" + r + rd + ", W.M."; }
+
+async function queryDnrSections(where) {
+  return arcQuery(SEC_Q, { where, outFields: SEC_FIELDS, geometryPrecision: "6" });
+}
+async function identifyDnrSectionAt(lat, lon) {
+  return arcQuery(SEC_Q, {
+    where: "PLS_TWP_SUBDIV_TYPE_CD=1",
+    geometry: JSON.stringify({ x: lon, y: lat, spatialReference: { wkid: 4326 } }),
+    geometryType: "esriGeometryPoint", inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: SEC_FIELDS, geometryPrecision: "6",
+  });
+}
+async function countyAt(lat, lon) {
+  try {
+    const j = await arcQuery(CNTY_Q, {
+      where: "1=1",
+      geometry: JSON.stringify({ x: lon, y: lat, spatialReference: { wkid: 4326 } }),
+      geometryType: "esriGeometryPoint", inSR: "4326",
+      spatialRel: "esriSpatialRelIntersects",
+      outFields: "*", returnGeometry: "false",
+    });
+    const a = j.features && j.features[0] && j.features[0].properties;
+    if (!a) return null;
+    return a.JURISDICT_LABEL_NM || a.JURISDICT_NM || a.COUNTY_NM || null;
+  } catch { return null; }
+}
+
+// BLM nationwide fallback: field names are discovered from the live schema
+// (not hardcoded) since this branch only runs when the primary WA DNR
+// service is unreachable and can't be verified from this environment.
+let blmSectionLayerCache = null;
+async function findBlmSectionLayer() {
+  if (blmSectionLayerCache) return blmSectionLayerCache;
+  const meta = await arcDescribe(BLM_PLSS_SVC);
+  const layer = (meta.layers || []).find(l => /first.?division|section/i.test(l.name || ""));
+  if (!layer) throw new Error("No Section/First-Division layer found in BLM service");
+  blmSectionLayerCache = layer;
+  return layer;
+}
+async function resolveViaBlm(t, td, r, rd, s) {
+  const layer = await findBlmSectionLayer();
+  const fieldNames = (layer.fields || []).map(f => f.name);
+  const twpNoF  = findFieldByPattern(fieldNames, ["twnshpno", "township.?no"]);
+  const twpDirF = findFieldByPattern(fieldNames, ["twnshpdir", "township.?dir"]);
+  const rngNoF  = findFieldByPattern(fieldNames, ["rangeno", "range.?no"]);
+  const rngDirF = findFieldByPattern(fieldNames, ["rangedir", "range.?dir"]);
+  const secNoF  = findFieldByPattern(fieldNames, ["frstdivno", "section.?no"]);
+  if (!twpNoF || !rngNoF || !secNoF) throw new Error("Could not identify township/range/section fields in BLM schema");
+  let where = `${twpNoF}=${t} AND ${rngNoF}=${r}` + (s ? ` AND ${secNoF}='${String(s).padStart(2, "0")}'` : "");
+  if (twpDirF) where += ` AND ${twpDirF}='${td}'`;
+  if (rngDirF) where += ` AND ${rngDirF}='${rd}'`;
+  const j = await arcQuery(`${BLM_PLSS_SVC}/${layer.id}/query`, { where, outFields: "*", geometryPrecision: "6" });
+  return j.features || [];
+}
+
+async function resolvePLSS(t, td, r, rd, s, tokens, fromParse, assumedNote) {
+  busy(true); setStatus("Querying WA DNR cadastre…"); showDebugUrl(null);
+  let features = null, usedFallback = false;
+  try {
+    let where = "PLS_TWP_SUBDIV_TYPE_CD=1 AND PLS_TWP_NO=" + t + " AND PLS_TWP_DIR_CD='" + td + "' AND PLS_RNG_NO=" + r + " AND PLS_RNG_DIR_CD='" + rd + "'";
+    if (s) where += " AND PLS_TWP_SUBDIV_NO=" + s;
+    const j = await queryDnrSections(where);
+    features = j.features || [];
+  } catch (err) {
+    if (!isNetworkError(err)) {
+      setStatus("WA DNR lookup failed: " + err.message + ". Trying nationwide BLM fallback…", false);
+    } else {
+      setStatus("WA DNR service unreachable (" + err.message + "). Trying nationwide BLM fallback…", false);
+    }
+    try {
+      features = await resolveViaBlm(t, td, r, rd, s);
+      usedFallback = true;
+    } catch (err2) {
+      showDebugUrl(lastQueryUrl);
+      setStatus("PLSS lookup failed on both WA DNR and the BLM fallback: " + err2.message + "." + netHint(err2));
+      busy(false); return;
+    }
+  }
+  showDebugUrl(lastQueryUrl);
+
+  if (!features || !features.length) {
+    setStatus("No PLSS match found for " + trsString(t, td, r, rd, s) + (usedFallback ? " (checked WA DNR and BLM)" : "") + ". Check the numbers and E/W direction.");
+    busy(false); return;
+  }
+
+  clearMapLayers();
+  const gj = L.geoJSON({ type: "FeatureCollection", features }, { style: { color: "#C0392B", weight: 2.5, fillColor: "#C0392B", fillOpacity: 0.08 } }).addTo(resultLayer);
+
+  if (!s && !usedFallback) {
+    const seen = new Set();
+    features.forEach(f => {
+      const n = f.properties.PLS_TWP_SUBDIV_NO;
+      if (!n || seen.has(n)) return; seen.add(n);
+      const st = featureStats(f.geometry);
+      L.marker([st.lat, st.lon], { interactive: false, icon: L.divIcon({ className: "seclabel", html: String(n), iconSize: [24, 14], iconAnchor: [12, 7] }) }).addTo(resultLayer);
+    });
+  }
+
+  const b = gj.getBounds();
+  let focus = b;
+  if (s && tokens && tokens.length) {
+    const bnds = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+    const [w2, s2, e2, n2] = aliquotBounds(bnds, tokens);
+    const ab = L.latLngBounds([s2, w2], [n2, e2]);
+    L.rectangle(ab, { color: "#007B5F", weight: 2.5, dashArray: "6 4", fillColor: "#007B5F", fillOpacity: 0.18 }).addTo(aliquotLayer);
+    focus = ab.pad(1.0);
+  }
+  map.fitBounds(focus.pad(0.15));
+
+  const st = featureStats(features[0].geometry);
+  let acres = 0; features.forEach(f => acres += featureStats(f.geometry).acres);
+  if (s && features.length > 1) acres = featureStats(features[0].geometry).acres;
+
+  const legal = (tokens && tokens.length ? aliquotLabel(tokens) + " " : "") + trsString(t, td, r, rd, s) + (usedFallback ? " (via BLM fallback)" : "");
+  await finishAtPoint(st.lat, st.lon, {
+    legal, acres: s ? acres : null, tokens: tokens || [],
+    tag: s ? "Section locate" : "Township locate",
+  });
+  setStatus((fromParse ? "Parsed and located: " : "Located: ") + legal + (assumedNote || ""), true);
+  busy(false);
+}
+
+async function resolveLatLon(lat, lon, tagText) {
+  busy(true); setStatus("Identifying location…"); showDebugUrl(null);
+  clearMapLayers();
+  L.circleMarker([lat, lon], { radius: 6, color: "#22301F", weight: 2, fillColor: "#FFD400", fillOpacity: 1 }).addTo(pinLayer);
+  map.setView([lat, lon], 13);
+
+  let legal = lat.toFixed(6) + ", " + lon.toFixed(6);
+  let acres = null, tokens = [];
+  try {
+    const j = await identifyDnrSectionAt(lat, lon);
+    showDebugUrl(lastQueryUrl);
+    if (j.features && j.features.length) {
+      const f = j.features[0], p = f.properties;
+      L.geoJSON(f, { style: { color: "#C0392B", weight: 2.5, fillColor: "#C0392B", fillOpacity: 0.08 } }).addTo(resultLayer);
+      const layer = L.geoJSON(f); const b = layer.getBounds();
+      const qx = (lon - b.getWest()) / (b.getEast() - b.getWest());
+      const qy = (lat - b.getSouth()) / (b.getNorth() - b.getSouth());
+      const q1 = (qy >= 0.5 ? "N" : "S") + (qx >= 0.5 ? "E" : "W");
+      const inx = qx >= 0.5 ? (qx - 0.5) * 2 : qx * 2;
+      const iny = qy >= 0.5 ? (qy - 0.5) * 2 : qy * 2;
+      const q2 = (iny >= 0.5 ? "N" : "S") + (inx >= 0.5 ? "E" : "W");
+      tokens = [q2, q1];
+      const st = featureStats(f.geometry); acres = st.acres;
+      legal = aliquotLabel(tokens) + " " + trsString(p.PLS_TWP_NO, p.PLS_TWP_DIR_CD, p.PLS_RNG_NO, p.PLS_RNG_DIR_CD, p.PLS_TWP_SUBDIV_NO) + " (aliquot approximate)";
+      map.fitBounds(b.pad(0.2));
+    }
+  } catch { /* PLSS context is a bonus for a coordinate lookup, not required */ }
+
+  await finishAtPoint(lat, lon, { legal, acres, tokens, tag: tagText || "Coordinate identify" });
+  setStatus("Located: " + lat.toFixed(6) + ", " + lon.toFixed(6), true);
+  busy(false);
+}
+
+/* ================= parcel resolver: WA statewide primary, per-county discovery fallback ================= */
+async function searchArcgisOnline(query, bbox, num) {
+  const params = { q: query, f: "json", num: num || 10, sortField: "relevance" };
+  if (bbox) params.bbox = bbox.map(v => v.toFixed(6)).join(",");
+  const url = ARCGIS_ONLINE_SEARCH + "?" + new URLSearchParams(params).toString();
+  lastQueryUrl = url;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const j = await res.json();
+  return j.results || [];
+}
+async function findCountyParcelServiceCandidates(countyName) {
+  if (!countyName) return [];
+  const name = /county/i.test(countyName) ? countyName : countyName + " County";
+  const results = await searchArcgisOnline(`parcels ${name} WA`, null, 10);
+  return results
+    .filter(r => r.type === "Feature Service" && r.url && /parcel|assessor|cadastr|tax.?lot/i.test(r.title || ""))
+    .map(r => ({ title: r.title, url: r.url }));
+}
+async function resolveParcelViaCounty(rawInput, countyName) {
+  const candidates = await findCountyParcelServiceCandidates(countyName);
+  for (const c of candidates) {
+    try {
+      const meta = await arcDescribe(c.url);
+      const layers = (meta.layers || []).filter(l => l.geometryType === "esriGeometryPolygon");
+      for (const layer of layers) {
+        const fieldNames = (layer.fields || []).map(f => f.name);
+        const apnField = findFieldByPattern(fieldNames, ["^apn$", "parcel.?id", "parcel.?num", "^pin$", "tax.?id"]);
+        if (!apnField) continue;
+        const digits = rawInput.replace(/[^0-9]/g, "");
+        const j = await arcQuery(`${c.url}/${layer.id}/query`, { where: `${apnField} LIKE '%${digits}%'`, outFields: "*", geometryPrecision: "6", resultRecordCount: 5 });
+        if (j.features && j.features.length) return j.features;
+      }
+    } catch { /* try next candidate */ }
+  }
+  return [];
+}
+async function resolveParcel(rawInput, countyHint) {
+  busy(true); setStatus("Querying WA statewide parcel service…"); showDebugUrl(null);
+  const digits = rawInput.replace(/[^0-9]/g, "");
+  if (digits.length < 5) { setStatus("That doesn't look like enough digits for a parcel number."); busy(false); return; }
+
+  let features = [], source = "statewide";
+  try {
+    const where = "ORIG_PARCEL_ID LIKE '%" + digits + "%' OR PARCEL_ID_NR LIKE '%" + digits + "%'";
+    const j = await arcQuery(WA_PARCELS_PRIMARY, { where, outFields: "*", geometryPrecision: "6", resultRecordCount: 5 });
+    features = j.features || [];
+  } catch (err) {
+    setStatus("Statewide parcel service " + (isNetworkError(err) ? "unreachable" : "error: " + err.message) + ". Trying per-county lookup…");
+  }
+
+  if (!features.length && countyHint) {
+    features = await resolveParcelViaCounty(rawInput, countyHint);
+    source = "county";
+  }
+
+  showDebugUrl(lastQueryUrl);
+  if (!features.length) {
+    setStatus('No parcel found matching "' + rawInput + '"' + (countyHint ? " in " + countyHint + " County or the statewide dataset" : " in the statewide dataset (try entering a County in Manual entry to also search that county directly)") + ".");
+    busy(false); return;
+  }
+  const multipleNote = features.length > 1
+    ? " (multiple parcels matched this number — showing the first; refine the number if this isn't the right one)"
+    : "";
+
+  const f = features[0], p = f.properties;
+  clearMapLayers();
+  L.geoJSON(f, { style: { color: "#C0392B", weight: 2.5, fillColor: "#C0392B", fillOpacity: 0.1 } }).addTo(resultLayer);
+  const layer = L.geoJSON(f);
+  map.fitBounds(layer.getBounds().pad(0.2));
+  const st = featureStats(f.geometry);
+
+  const parcelId = pickField(p, ["PARCEL_ID_NR", "ORIG_PARCEL_ID", "APN", "PARCEL_ID", "PIN"]) || rawInput;
+  const situs = [pickField(p, ["SITUS_ADDRESS"]), pickField(p, ["SITUS_CITY_NM"]), pickField(p, ["SITUS_ZIP_NR"])].filter(Boolean).join(", ");
+  const legal = "Parcel " + parcelId + (situs ? " — " + situs : "") + (source === "county" ? " (via county lookup)" : "");
+
+  await finishAtPoint(st.lat, st.lon, { legal, acres: st.acres, tag: "Parcel locate", assessorUrl: pickField(p, ["DATA_LINK"]) });
+  setStatus("Located parcel " + parcelId + multipleNote, multipleNote ? null : true);
+  busy(false);
+}
+
+/* ================= airports: WSDOT primary -> legacy -> ArcGIS Online -> static seed ================= */
+let airportCache = null, airportFetchPromise = null, airportSource = null;
+function looksPrivate(props) {
+  const val = pickField(props, ["Ownership", "OWNERSHIP", "OwnerType", "OWNER_TYPE", "FacilityUse", "FAC_USE", "PRIVATEUSE", "PUBLIC_PRIVATE"]);
+  if (val === null) return false;
+  const s = String(val).trim().toUpperCase();
+  return s === "PRIVATE" || s === "PR" || s === "1" || s.startsWith("PRIV");
+}
+function airportLabel(props) {
+  const name = pickField(props, ["AirportName", "FacilityName", "Name", "SiteName", "ARPT_NAME", "AIRPORTNAME", "name"]) || "Unnamed airport";
+  const id = pickField(props, ["LocationID", "LocID", "LOCID", "Loc_Id", "FAAID", "FAA_ID", "ICAO_ID", "IDENT", "id"]);
+  return id ? name + " (" + id + ")" : name;
+}
+async function fetchAirportsFrom(url) {
+  const j = await arcQuery(url, { where: "1=1", outFields: "*", geometryPrecision: "6" });
+  const all = (j.features || [])
+    .filter(f => f.geometry && f.geometry.coordinates)
+    .map(f => ({ lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], props: f.properties }));
+  const publicOnly = all.filter(a => !looksPrivate(a.props));
+  return publicOnly.length ? publicOnly : all;
+}
+async function fetchAirportsViaDiscovery() {
+  const results = await searchArcgisOnline("Washington state public use airports", null, 10);
+  const candidates = results.filter(r => r.type === "Feature Service" && r.url && /airport/i.test(r.title || ""));
+  for (const c of candidates) {
+    try {
+      const list = await fetchAirportsFrom(c.url + "/0");
+      if (list.length) return list;
+    } catch { /* try next */ }
+  }
+  return [];
+}
+async function getAirports() {
+  if (airportCache) return { list: airportCache, source: airportSource };
+  if (!airportFetchPromise) {
+    airportFetchPromise = (async () => {
+      try {
+        const list = await fetchAirportsFrom(WSDOT_AIRPORTS_PRIMARY);
+        airportSource = "wsdot";
+        return list;
+      } catch { /* try legacy */ }
+      try {
+        const list = await fetchAirportsFrom(WSDOT_AIRPORTS_LEGACY);
+        airportSource = "wsdot-legacy";
+        return list;
+      } catch { /* try discovery */ }
+      try {
+        const list = await fetchAirportsViaDiscovery();
+        if (list.length) { airportSource = "arcgis-discovery"; return list; }
+      } catch { /* fall through to seed */ }
+      airportSource = "static-seed";
+      return WA_AIRPORTS_SEED.map(a => ({ lon: a.lon, lat: a.lat, props: { AirportName: a.name, LocationID: a.id, city: a.city } }));
+    })().then(list => { airportCache = list; return list; })
+      .catch(err => { airportFetchPromise = null; throw err; });
+  }
+  const list = await airportFetchPromise;
+  return { list, source: airportSource };
+}
+async function nearestAirports(lat, lon, n) {
+  const { list, source } = await getAirports();
+  if (!list.length) return { list: [], source };
+  const scored = list.map(a => ({ ...a, nm: haversineNM(lat, lon, a.lat, a.lon) }));
+  scored.sort((a, b) => a.nm - b.nm);
+  return { list: scored.slice(0, n).map(a => ({ ...a, bearing: bearingDeg(lat, lon, a.lat, a.lon) })), source };
+}
+async function drawAirportsList(lat, lon, n) {
+  n = n || 5;
+  try {
+    const { list, source } = await nearestAirports(lat, lon, n);
+    airportLayer.clearLayers();
+    if (!list.length) return { list: [], source };
+    list.forEach((a, i) => {
+      L.polyline([[lat, lon], [a.lat, a.lon]], { color: "#007B5F", weight: 1.5, dashArray: "3 5", opacity: 0.7 }).addTo(airportLayer);
+      L.marker([a.lat, a.lon], { icon: L.divIcon({ className: "", html: '<div class="airportnum">' + (i + 1) + '</div>', iconSize: [0, 0] }) })
+        .bindTooltip(airportLabel(a.props), { direction: "top" }).addTo(airportLayer);
+    });
+    return { list, source };
+  } catch (err) {
+    setStatus("Airport lookup failed (" + err.message + ")");
+    return { list: [], source: null };
+  }
+}
+function renderAirportList(list, source) {
+  if (!list.length) { $("airportListLabel").style.display = "none"; $("airportStamp").style.display = "none"; return; }
+  $("airportListLabel").style.display = "block";
+  $("airportStamp").style.display = "block";
+  const rows = list.map((a, i) => {
+    const mi = a.nm * 1.15078;
+    return '<div class="airport-row"><span class="rank">' + (i + 1) + '</span>' +
+      '<span class="name">' + airportLabel(a.props) + '</span>' +
+      '<span class="dist">' + a.nm.toFixed(1) + ' nm / ' + mi.toFixed(1) + ' mi &middot; ' + Math.round(a.bearing) + '° ' + compassWord(a.bearing) + '</span></div>';
+  }).join("");
+  $("airportList").innerHTML = rows;
+  const noteMap = {
+    wsdot: "Source: WSDOT non-military airports service, filtered to public-use.",
+    "wsdot-legacy": "Source: WSDOT legacy airports service (primary was unreachable), filtered to public-use.",
+    "arcgis-discovery": "Source: ArcGIS Online discovery fallback (WSDOT services were unreachable) — verify results.",
+    "static-seed": "Source: built-in static seed list (all live airport services were unreachable) — may be outdated; verify before relying on this.",
+  };
+  $("airportSourceNote").textContent = noteMap[source] || "";
+}
+
+/* ================= smart extraction: PLSS / lat-lon / parcel / address / context ================= */
+function trsStringPreview(t, td, r, rd, s) { let o = ""; if (s) o += "Sec " + s + ", "; return o + "T" + t + td + " R" + r + rd; }
+
+function detectLatLonCandidates(text) {
+  const out = [];
+  const re1 = /(-?\d{1,3}\.\d{2,8})\s*[,\s]\s*(-?\d{1,3}\.\d{2,8})/g;
+  let m;
+  while ((m = re1.exec(text)) !== null) {
+    let lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const t = lat; lat = lon; lon = t; }
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
+    if (lon >= 100 && lon <= 180 && lat > 0) lon = -lon;
+    out.push({ type: "latlon", label: "Coordinates " + lat.toFixed(5) + ", " + lon.toFixed(5), lat, lon });
+  }
+  const re2 = /(\d{1,3}(?:\.\d+)?)\s*°?\s*([NS])[,\s]+(\d{1,3}(?:\.\d+)?)\s*°?\s*([EW])/gi;
+  while ((m = re2.exec(text)) !== null) {
+    let lat = parseFloat(m[1]) * (m[2].toUpperCase() === "S" ? -1 : 1);
+    let lon = parseFloat(m[3]) * (m[4].toUpperCase() === "W" ? -1 : 1);
+    out.push({ type: "latlon", label: "Coordinates " + lat.toFixed(5) + ", " + lon.toFixed(5), lat, lon });
+  }
+  return out;
+}
+function detectPLSSCandidates(text) {
+  const up = text.toUpperCase();
+  const out = [];
+  let m = up.match(/\b(\d{1,2})\s*-\s*(\d{1,3})\s*(N|S)?\s*-\s*(\d{1,3})\s*(E|W)?\b/);
+  if (m) {
+    const tokens = parseAliquotTokens(up);
+    out.push({ type: "plss", label: "PLSS " + trsStringPreview(+m[2], m[3] || "N", +m[4], m[5] || "E", +m[1]), t: +m[2], td: m[3] || "N", r: +m[4], rd: m[5] || "E", s: +m[1], tokens, assumed: !m[3] || !m[5] });
+    return out;
+  }
+  const tMatch = up.match(/\bT(?:OWNSHIP)?\.?\s*(\d{1,3})\s*(N|S)?\b/);
+  const rMatch = up.match(/\bR(?:ANGE)?\.?\s*(\d{1,3})\s*(E|W)?\b/);
+  const sMatch = up.match(/\bS(?:EC(?:TION)?)?\.?\s*(\d{1,2})\b/);
+  if (tMatch && rMatch) {
+    const tDir = tMatch[2] || "N", rDir = rMatch[2] || "E";
+    const tokens = parseAliquotTokens(up);
+    out.push({
+      type: "plss", label: "PLSS " + trsStringPreview(+tMatch[1], tDir, +rMatch[1], rDir, sMatch ? +sMatch[1] : null),
+      t: +tMatch[1], td: tDir, r: +rMatch[1], rd: rDir, s: sMatch ? +sMatch[1] : null, tokens,
+      assumed: !tMatch[2] || !rMatch[2],
+    });
+  }
+  return out;
+}
+function detectParcelCandidates(text) {
+  const out = [];
+  const patterns = [
+    /\b(?:tax\s+)?parcel(?:\s+(?:id|no\.?|number|#))?\s*[:#]?\s*([0-9][0-9\-]{6,23})/i,
+    /\bAPN\s*[:#]?\s*([0-9][0-9\-]{5,23})/i,
+    /\bassessor'?s?\s+parcel\s*(?:no\.?|number)?\s*[:#]?\s*([0-9][0-9\-]{6,23})/i,
+  ];
+  const seen = new Set();
+  patterns.forEach(re => {
+    const m = text.match(re);
+    if (m) {
+      const digits = m[1].replace(/[^0-9]/g, "");
+      if (digits.length >= 5 && !seen.has(digits)) {
+        seen.add(digits);
+        out.push({ type: "parcel", label: "Parcel " + m[1].trim(), raw: m[1].trim() });
+      }
+    }
+  });
+  // A block of several space/comma separated parcel numbers ("Parcels: 123456, 234567, ...")
+  const block = text.match(/parcels?\s*[:.]?\s*((?:\d{6,15}[\s,]*){2,})/i);
+  if (block) {
+    const nums = block[1].match(/\d{6,15}/g) || [];
+    nums.forEach(n => { if (!seen.has(n)) { seen.add(n); out.push({ type: "parcel", label: "Parcel " + n, raw: n }); } });
+  }
+  return out;
+}
+function detectAddressCandidates(text) {
+  const out = [];
+  // Optional post-directional (Ave N, St SE, ...) between the street suffix
+  // and any trailing city/state/zip -- common in real addresses and missing
+  // from the original regex, which silently truncated e.g. "...Ave N, Shoreline, WA".
+  const re = /\b\d{1,6}\s+[A-Za-z0-9.'\- ]{2,45}?\s+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Blvd|Boulevard|Way|Ct|Court|Pl|Place|Hwy|Highway|Pkwy|Parkway|Cir|Circle|Loop|Trl|Trail)\.?\b(?:\s+(?:N|S|E|W|NE|NW|SE|SW)\.?\b)?(?:[ ,]+[A-Za-z .]{2,30},?\s*(?:WA|Washington)?\s*\d{0,5})?/gi;
+  const seen = new Set();
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const cand = m[0].trim().replace(/\s+/g, " ");
+    if (!seen.has(cand)) { seen.add(cand); out.push({ type: "address", label: "Address: " + cand, text: cand }); }
+  }
+  return out.slice(0, 3);
+}
+function detectCounty(text) {
+  // Require a proper-noun run (1-3 capitalized words) right before "County"
+  // rather than any lowercase word run, or a sentence like "...near Ephrata
+  // in Grant County..." greedily captures "near Ephrata in Grant" instead of "Grant".
+  const patterns = [
+    /(?:^|[\s,])([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2})\s+[Cc]ounty\b/,
+    /[Cc]ounty\s*(?:of)?\s*[:.]?\s*([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2})\b/,
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) {
+      const c = m[1].trim();
+      if (!["development", "services", "planning", "director", "division", "permit"].some(x => c.toLowerCase().includes(x))) return c;
+    }
+  }
+  return null;
+}
+function detectCity(text) {
+  const m = text.match(/(?:[Cc]ity|[Tt]own)\s*(?:of)?\s*[:.]?\s*([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2})(?:\s*[,.\n]|$|\s+WA)/);
+  return m ? m[1].trim() : null;
+}
+function detectContext(text) {
+  return { county: detectCounty(text), city: detectCity(text) };
+}
+function detectCandidates(text) {
+  if (!text || !text.trim()) return [];
+  const plss = detectPLSSCandidates(text);
+  const latlon = detectLatLonCandidates(text);
+  const parcel = detectParcelCandidates(text);
+  const address = detectAddressCandidates(text);
+  const cands = [...plss, ...latlon, ...parcel, ...address];
+  if (!cands.length) {
+    // Nothing specific found -- fall back to whatever city/county context we can read,
+    // so the tool still tries to give *something* rather than a dead end.
+    const ctx = detectContext(text);
+    if (ctx.city || ctx.county) {
+      const label = [ctx.city, ctx.county ? ctx.county + " County" : null].filter(Boolean).join(", ");
+      cands.push({ type: "citycounty", label: "Approximate area: " + label + ", WA", city: ctx.city, county: ctx.county });
+    }
+  }
+  return cands;
+}
+
+/* ================= file reading: PDF / DOCX / TXT / CSV ================= */
+async function readFileAsText(file) {
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (ext === "txt" || ext === "csv") {
+    return await file.text();
+  }
+  if (ext === "docx") {
+    if (!window.mammoth) throw new Error("Document converter did not load (check your network/CDN access)");
+    const buf = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer: buf });
+    return result.value;
+  }
+  if (ext === "pdf") {
+    if (!window.pdfjsLib) throw new Error("PDF reader did not load (check your network/CDN access)");
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    let text = "";
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      text += content.items.map(it => it.str).join(" ") + "\n";
+    }
+    return text;
+  }
+  throw new Error("Unsupported file type: ." + ext);
+}
+
+/* ================= diagnostics ================= */
+async function testEndpoint(name, fn) {
+  try {
+    const detail = await fn();
+    return { name, ok: true, detail: detail || "OK", url: lastQueryUrl };
+  } catch (err) {
+    return { name, ok: false, detail: (isNetworkError(err) ? "Network/CORS error: " : "Error: ") + err.message, url: lastQueryUrl };
+  }
+}
+async function runDiagnostics() {
+  const tests = [
+    () => testEndpoint("WA DNR PLSS cadastre (root service)", async () => {
+      const meta = await arcDescribe(DNR_SVC);
+      if (!meta.layers) throw new Error("response had no 'layers' — service may have changed shape");
+      return meta.layers.length + " layers found";
+    }),
+    () => testEndpoint("WA DNR county boundaries layer", async () => {
+      const meta = await arcDescribe(CNTY_Q);
+      return "layer reachable, " + (meta.fields ? meta.fields.length : "?") + " fields";
+    }),
+    () => testEndpoint("BLM nationwide PLSS fallback", async () => {
+      const layer = await findBlmSectionLayer();
+      return "found layer '" + layer.name + "' (id " + layer.id + ")";
+    }),
+    () => testEndpoint("WA statewide parcels service", async () => {
+      const meta = await arcDescribe(WA_PARCELS_PRIMARY);
+      return "layer reachable, " + (meta.fields ? meta.fields.length : "?") + " fields";
+    }),
+    () => testEndpoint("WSDOT airports (primary)", async () => {
+      const meta = await arcDescribe(WSDOT_AIRPORTS_PRIMARY);
+      return "layer reachable, " + (meta.fields ? meta.fields.length : "?") + " fields";
+    }),
+    () => testEndpoint("WSDOT airports (legacy fallback)", async () => {
+      const meta = await arcDescribe(WSDOT_AIRPORTS_LEGACY);
+      return "layer reachable, " + (meta.fields ? meta.fields.length : "?") + " fields";
+    }),
+    () => testEndpoint("ArcGIS Online search (used for fallbacks)", async () => {
+      const results = await searchArcgisOnline("Washington parcels", null, 3);
+      return results.length + " result(s) for a test query";
+    }),
+    () => testEndpoint("Census geocoder (JSONP)", async () => {
+      const data = await censusGeocodeJSONP("1600 Pennsylvania Ave NW, Washington, DC");
+      const matches = data && data.result && data.result.addressMatches;
+      if (!matches || !matches.length) throw new Error("reachable but returned no match for a known-good test address");
+      return "matched: " + matches[0].matchedAddress;
+    }),
+    () => testEndpoint("Nominatim geocoder", async () => {
+      const r = await geocodeNominatim("Olympia, WA");
+      if (!r) throw new Error("reachable but returned no match for a known-good test query");
+      return "matched: " + r.display;
+    }),
+  ];
+
+  const resultsBox = $("diagResults");
+  resultsBox.innerHTML = tests.map((_, i) => diagRowHtml({ name: "Test " + (i + 1), ok: null, detail: "pending…" })).join("");
+
+  for (let i = 0; i < tests.length; i++) {
+    const result = await tests[i]();
+    resultsBox.children[i].outerHTML = diagRowHtml(result);
+  }
+}
+function diagRowHtml(r) {
+  const statusClass = r.ok === null ? "pending" : (r.ok ? "ok" : "fail");
+  const statusText = r.ok === null ? "…" : (r.ok ? "OK" : "FAIL");
+  const link = r.url ? `<div class="ddetail"><a href="${r.url}" target="_blank" rel="noopener">Open raw request in a new tab &rarr;</a></div>` : "";
+  return `<div class="diag-row"><span class="dname">${r.name}</span><span class="dstatus ${statusClass}">${statusText}</span>` +
+    `<div class="ddetail">${(r.detail || "").toString().replace(/</g, "&lt;")}</div>${link}</div>`;
+}
+
+/* ================= map setup =================
+ * Declared here, initialized lazily in initMap() (called only in a browser
+ * context -- see the guard at the bottom of this file) so this module can
+ * still be `require()`d under Node for testing the pure logic above without
+ * needing a DOM or Leaflet available. */
+let map, baseOSM, baseImg, baseTopo, resultLayer, aliquotLayer, pinLayer, airportLayer;
+let gridOn = true, gridOverlay = null, gridTimer = null;
+
+function mercBBox() {
+  const b = map.getBounds();
+  const sw = L.Projection.SphericalMercator.project(b.getSouthWest());
+  const ne = L.Projection.SphericalMercator.project(b.getNorthEast());
+  return { bbox: [sw.x, sw.y, ne.x, ne.y].join(","), llb: b };
+}
+function refreshGrid() {
+  if (!gridOn) { if (gridOverlay) { map.removeLayer(gridOverlay); gridOverlay = null; } return; }
+  const z = map.getZoom();
+  let layers = null;
+  if (z >= 11) layers = "show:7,8";
+  else if (z >= 8) layers = "show:8";
+  if (!layers) { if (gridOverlay) { map.removeLayer(gridOverlay); gridOverlay = null; } return; }
+  const { bbox, llb } = mercBBox();
+  const size = map.getSize();
+  const url = EXPORT_URL + "?f=image&format=png32&transparent=true&bboxSR=3857&imageSR=3857&bbox=" + encodeURIComponent(bbox) + "&size=" + size.x + "," + size.y + "&layers=" + encodeURIComponent(layers) + "&dpi=96";
+  const img = L.imageOverlay(url, llb, { opacity: 0.85, interactive: false, pane: "tilePane" });
+  img.once("load", () => { if (gridOverlay) map.removeLayer(gridOverlay); gridOverlay = img; });
+  img.addTo(map);
+  setTimeout(() => { if (gridOverlay !== img && map.hasLayer(img)) { if (gridOverlay) map.removeLayer(gridOverlay); gridOverlay = img; } }, 4000);
+}
+
+function initMap() {
+  map = L.map("map", { zoomControl: true }).setView([47.4, -120.5], 7);
+  baseOSM = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" });
+  baseImg = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery &copy; Esri" });
+  baseTopo = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Topo &copy; Esri" });
+  baseTopo.addTo(map);
+
+  resultLayer = L.layerGroup().addTo(map);
+  aliquotLayer = L.layerGroup().addTo(map);
+  pinLayer = L.layerGroup().addTo(map);
+  airportLayer = L.layerGroup().addTo(map);
+
+  map.on("moveend", () => { clearTimeout(gridTimer); gridTimer = setTimeout(refreshGrid, 250); });
+  refreshGrid();
+
+  const Toolbar = L.Control.extend({
+    options: { position: "topright" },
+    onAdd() {
+      const div = L.DomUtil.create("div", "map-toolbar");
+      div.innerHTML = '<button data-b="topo" class="on">Topo</button><button data-b="img">Imagery</button><button data-b="osm">Streets</button><button data-b="grid" class="on">PLSS grid: on</button>';
+      L.DomEvent.disableClickPropagation(div);
+      div.addEventListener("click", (e) => {
+        const b = e.target.closest("button"); if (!b) return;
+        const which = b.dataset.b;
+        if (which === "grid") {
+          gridOn = !gridOn; b.classList.toggle("on", gridOn);
+          b.textContent = "PLSS grid: " + (gridOn ? "on" : "off");
+          refreshGrid(); return;
+        }
+        [baseOSM, baseImg, baseTopo].forEach(l => map.removeLayer(l));
+        ({ osm: baseOSM, img: baseImg, topo: baseTopo })[which].addTo(map);
+        div.querySelectorAll("button[data-b]").forEach(x => { if (x.dataset.b !== "grid") x.classList.toggle("on", x === b); });
+      });
+      return div;
+    },
+  });
+  map.addControl(new Toolbar());
+  map.on("click", e => resolveLatLon(e.latlng.lat, e.latlng.lng, "Point identify"));
+}
+
+/* ================= status / busy / result rendering ================= */
+function setStatus(msg, ok) {
+  const statusEl = $("status");
+  statusEl.textContent = msg || "";
+  statusEl.classList.toggle("ok", ok === true);
+  statusEl.classList.toggle("warn", ok === null);
+}
+function busy(on) { $("analyzeBtn").disabled = on; $("gpsBtn").disabled = on; $("trsGoBtn").disabled = on; }
+function showDebugUrl(url) {
+  const box = $("debugUrl"), link = $("debugUrlLink");
+  if (!url) { box.style.display = "none"; return; }
+  link.href = url; box.style.display = "block";
+}
+
+let lastLegal = "", lastCoord = "";
+function showResult(o) {
+  $("result").style.display = "block";
+  $("stampTag").textContent = o.tag || "Location";
+  $("stampTag2").textContent = o.tag2 || "";
+  $("legalOut").textContent = o.legal;
+  $("countyOut").textContent = o.county || "–";
+  $("centroidOut").textContent = o.lat.toFixed(6) + ", " + o.lon.toFixed(6);
+  $("dmsOut").textContent = fmtDMS(o.lat, true) + " " + fmtDMS(o.lon, false);
+  $("areaOut").textContent = o.acres ? Math.round(o.acres).toLocaleString() + " ac" : "–";
+  $("aliquotNote").style.display = (o.tokens && o.tokens.length) ? "block" : "none";
+  lastLegal = o.legal; lastCoord = o.lat.toFixed(6) + ", " + o.lon.toFixed(6);
+
+  let links = '<button class="mini" id="copyLegal" type="button">Copy label</button><button class="mini" id="copyCoord" type="button">Copy coords</button>';
+  const z = 14;
+  if (["Section locate", "Township locate", "Point identify", "GPS identify", "Coordinate identify"].includes(o.tag)) {
+    links += '<a href="https://geo.wa.gov/datasets/wadnr::wa-public-land-survey-sections/explore?location=' + o.lat.toFixed(6) + '%2C' + o.lon.toFixed(6) + '%2C' + z + '" target="_blank" rel="noopener">DNR viewer</a>';
+  }
+  if (o.assessorUrl) links += '<a href="' + o.assessorUrl + '" target="_blank" rel="noopener">County assessor</a>';
+  links += '<a href="https://www.google.com/maps/search/?api=1&query=' + o.lat.toFixed(6) + '%2C' + o.lon.toFixed(6) + '" target="_blank" rel="noopener">Google Maps</a>';
+  $("linksRow").innerHTML = links;
+  $("copyLegal").addEventListener("click", e => copyText(lastLegal, e.target));
+  $("copyCoord").addEventListener("click", e => copyText(lastCoord, e.target));
+}
+async function copyText(txt, btn) {
+  try { await navigator.clipboard.writeText(txt); const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = old, 1200); }
+  catch { setStatus("Clipboard unavailable in this window; select and copy manually."); }
+}
+function clearMapLayers() { resultLayer.clearLayers(); aliquotLayer.clearLayers(); pinLayer.clearLayers(); airportLayer.clearLayers(); }
+
+async function finishAtPoint(lat, lon, resultFields) {
+  const [county, airportResult] = await Promise.all([
+    countyAt(lat, lon),
+    drawAirportsList(lat, lon, 5),
+  ]);
+  showResult({ ...resultFields, lat, lon, county });
+  renderAirportList(airportResult.list, airportResult.source);
+}
+
+/* ================= address / parcel-via-county / city-county resolvers ================= */
+async function resolveAddressAndShow(addressText) {
+  busy(true); setStatus("Geocoding address…"); showDebugUrl(null);
+  try {
+    const loc = await geocodeAddress(addressText);
+    showDebugUrl(lastQueryUrl);
+    if (!loc) { setStatus('No geocoding match for "' + addressText + '". Try a more complete address (street, city, state), or use Manual entry.'); busy(false); return; }
+    clearMapLayers();
+    L.circleMarker([loc.lat, loc.lon], { radius: 6, color: "#22301F", weight: 2, fillColor: "#FFD400", fillOpacity: 1 }).addTo(pinLayer);
+    map.setView([loc.lat, loc.lon], 15);
+    await finishAtPoint(loc.lat, loc.lon, { legal: loc.display || addressText, tag: "Address geocode" });
+    setStatus("Geocoded (" + loc.source + "): " + (loc.display || addressText), true);
+  } catch (err) {
+    setStatus("Address geocoding failed: " + err.message + "." + netHint(err));
+  } finally { busy(false); }
+}
+async function resolveCityCounty(city, county) {
+  busy(true); setStatus("Locating approximate area (no address/PLSS/parcel found — using city/county context)…"); showDebugUrl(null);
+  try {
+    let query = city || "";
+    if (county) query += (query ? ", " : "") + county + " County";
+    query += ", WA";
+    const loc = await geocodeAddress(query);
+    showDebugUrl(lastQueryUrl);
+    if (!loc) { setStatus('Could not locate "' + query + '". Try Manual entry instead.'); busy(false); return; }
+    clearMapLayers();
+    L.circleMarker([loc.lat, loc.lon], { radius: 6, color: "#22301F", weight: 2, fillColor: "#FFD400", fillOpacity: 1 }).addTo(pinLayer);
+    map.setView([loc.lat, loc.lon], 11);
+    await finishAtPoint(loc.lat, loc.lon, { legal: "Approximate: " + query, tag: "Area estimate (city/county only)" });
+    setStatus("Approximate area located from document context: " + query + ". This is NOT a precise site location — refine with an address, parcel number, or PLSS description if available.", null);
+  } catch (err) {
+    setStatus("Area lookup failed: " + err.message + "." + netHint(err));
+  } finally { busy(false); }
+}
+
+/* ================= candidate picker ================= */
+function runCandidate(c) {
+  $("candidates").style.display = "none";
+  if (c.type === "plss") {
+    $("twp").value = c.t; $("twpDir").value = c.td; $("rng").value = c.r; $("rngDir").value = c.rd;
+    $("sec").value = c.s || ""; $("aliquot").value = c.tokens.length ? aliquotLabel(c.tokens) : "";
+    const note = c.assumed ? " (assumed missing direction letters — check the manual fields above)" : "";
+    resolvePLSS(c.t, c.td, c.r, c.rd, c.s, c.tokens, true, note);
+  } else if (c.type === "latlon") {
+    resolveLatLon(c.lat, c.lon, "Coordinate identify");
+  } else if (c.type === "parcel") {
+    const countyGuess = $("context").dataset.county || null;
+    resolveParcel(c.raw, countyGuess);
+  } else if (c.type === "address") {
+    resolveAddressAndShow(c.text);
+  } else if (c.type === "citycounty") {
+    resolveCityCounty(c.city, c.county);
+  }
+}
+function renderCandidates(list) {
+  const box = $("candidates");
+  if (list.length <= 1) { box.style.display = "none"; return; }
+  box.style.display = "block";
+  box.innerHTML = "";
+  const heading = document.createElement("div");
+  heading.className = "hint"; heading.style.marginBottom = "6px";
+  heading.textContent = "Found more than one possible location — pick one:";
+  box.appendChild(heading);
+  list.forEach((c) => {
+    const b = document.createElement("button");
+    b.className = "cbtn"; b.type = "button";
+    b.innerHTML = '<span class="tag">' + c.type + '</span>' + c.label;
+    b.addEventListener("click", () => runCandidate(c));
+    box.appendChild(b);
+  });
+}
+function renderContext(ctx) {
+  const box = $("context");
+  if (!ctx || (!ctx.county && !ctx.city)) { box.style.display = "none"; return; }
+  box.style.display = "block";
+  box.dataset.county = ctx.county || "";
+  box.innerHTML = "Document context: " + (ctx.city ? "<b>" + ctx.city + "</b>" : "") +
+    (ctx.city && ctx.county ? ", " : "") + (ctx.county ? "<b>" + ctx.county + " County</b>" : "") +
+    " — used to help disambiguate parcel/address lookups.";
+}
+
+/* ================= UI wiring ================= */
+function initEventListeners() {
+  $("clearBtn").addEventListener("click", () => {
+    clearMapLayers(); $("result").style.display = "none"; $("candidates").style.display = "none"; $("context").style.display = "none";
+    setStatus(""); showDebugUrl(null);
+  });
+
+  $("fileInput").addEventListener("change", async () => {
+    const file = $("fileInput").files[0];
+    if (!file) return;
+    $("fileName").textContent = file.name;
+    setStatus("Reading " + file.name + "…");
+    try {
+      const text = await readFileAsText(file);
+      $("freeText").value = text;
+      setStatus("Loaded " + file.name + ". Click Analyze & Locate.", true);
+    } catch (err) {
+      setStatus("Could not read " + file.name + ": " + err.message);
+    }
+  });
+
+  $("analyzeBtn").addEventListener("click", () => {
+    const text = $("freeText").value;
+    const ctx = detectContext(text);
+    renderContext(ctx);
+    const candidates = detectCandidates(text);
+    if (!candidates.length) {
+      setStatus("Couldn't find a PLSS description, parcel number, address, coordinates, or even a city/county mention in that text. Try the manual entry fields below.");
+      return;
+    }
+    if (candidates.length === 1) { renderCandidates([]); runCandidate(candidates[0]); }
+    else { renderCandidates(candidates); setStatus("Found " + candidates.length + " possible locations — choose one below.", true); }
+  });
+
+  $("manLatLonGo").addEventListener("click", () => {
+    const v = $("manLatLon").value.trim();
+    const m = v.match(/^\s*(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+    if (!m) { setStatus("Enter coordinates as: lat, lon"); return; }
+    let lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+    if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { const t = lat; lat = lon; lon = t; }
+    if (lon >= 100 && lon <= 180 && lat > 0) lon = -lon;
+    resolveLatLon(lat, lon, "Coordinate identify");
+  });
+  $("manParcelGo").addEventListener("click", () => {
+    const v = $("manParcel").value.trim();
+    if (!v) { setStatus("Enter a parcel number."); return; }
+    resolveParcel(v, $("manCityCounty").value.trim() || null);
+  });
+  $("manAddrGo").addEventListener("click", () => {
+    const v = $("manAddr").value.trim();
+    if (!v) { setStatus("Enter an address."); return; }
+    resolveAddressAndShow(v);
+  });
+  $("manCityCountyGo").addEventListener("click", () => {
+    const v = $("manCityCounty").value.trim();
+    if (!v) { setStatus("Enter a city and/or county."); return; }
+    const parts = v.split(",").map(s => s.trim()).filter(Boolean);
+    const county = parts.find(p => /county/i.test(p)) || null;
+    const city = parts.find(p => p !== county) || null;
+    resolveCityCounty(city, county ? county.replace(/\s*county\s*/i, "") : null);
+  });
+  ["manLatLon", "manParcel", "manAddr", "manCityCounty"].forEach(id => {
+    $(id).addEventListener("keydown", e => { if (e.key === "Enter") $(id + "Go").click(); });
+  });
+  $("trsGoBtn").addEventListener("click", () => {
+    const t = parseInt($("twp").value, 10), r = parseInt($("rng").value, 10);
+    const s = $("sec").value ? parseInt($("sec").value, 10) : null;
+    if (!t || !r) { setStatus("Enter at least a township and range number."); return; }
+    if (s && (s < 1 || s > 36)) { setStatus("Section must be 1–36."); return; }
+    const tokens = parseAliquotTokens($("aliquot").value);
+    resolvePLSS(t, $("twpDir").value, r, $("rngDir").value, s, tokens, false, "");
+  });
+  ["twp", "rng", "sec", "aliquot"].forEach(id => $(id).addEventListener("keydown", e => { if (e.key === "Enter") $("trsGoBtn").click(); }));
+
+  $("gpsBtn").addEventListener("click", () => {
+    if (!navigator.geolocation) { setStatus("Geolocation is not available in this browser."); return; }
+    setStatus("Requesting device position…");
+    navigator.geolocation.getCurrentPosition(
+      pos => resolveLatLon(pos.coords.latitude, pos.coords.longitude, "GPS identify"),
+      err => setStatus("Could not get position: " + err.message),
+      { enableHighAccuracy: true, timeout: 12000 },
+    );
+  });
+
+  $("openDiagBtn").addEventListener("click", () => { $("diagOverlay").classList.add("open"); });
+  $("diagCloseBtn").addEventListener("click", () => { $("diagOverlay").classList.remove("open"); });
+  $("diagOverlay").addEventListener("click", e => { if (e.target.id === "diagOverlay") $("diagOverlay").classList.remove("open"); });
+  $("runDiagBtn").addEventListener("click", () => { $("runDiagBtn").disabled = true; runDiagnostics().finally(() => { $("runDiagBtn").disabled = false; }); });
+
+  window.addEventListener("error", e => { setStatus("Unexpected script error: " + e.message + " (line " + e.lineno + ")."); });
+  window.addEventListener("unhandledrejection", e => { setStatus("Unexpected error: " + (e.reason && e.reason.message ? e.reason.message : e.reason)); });
+}
+
+/* ================= entry point =================
+ * Guarded so this file can be `require()`d under Node (see exports below)
+ * without a DOM/Leaflet/window present -- only the pure logic functions
+ * are needed for that. In a real browser this guard is always true. */
+if (typeof document !== "undefined" && typeof window !== "undefined" && typeof L !== "undefined") {
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+  initMap();
+  initEventListeners();
+}
+
+/* ================= exports for testing (Node) ================= */
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    fmtDMS, ringStats, featureStats, haversineNM, bearingDeg, compassWord,
+    parseAliquotTokens, aliquotBounds, aliquotLabel,
+    detectLatLonCandidates, detectPLSSCandidates, detectParcelCandidates, detectAddressCandidates,
+    detectCounty, detectCity, detectContext, detectCandidates,
+    pickField, findFieldByPattern, looksPrivate, airportLabel, trsString, trsStringPreview,
+  };
+}
+
+</script>
+</body>
+</html>
