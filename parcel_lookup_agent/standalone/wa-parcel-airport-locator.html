@@ -766,7 +766,41 @@ async function findCountyParcelServiceCandidates(countyName) {
     .filter(r => r.type === "Feature Service" && r.url && /parcel|assessor|cadastr|tax.?lot/i.test(r.title || ""))
     .map(r => ({ title: r.title, url: r.url }));
 }
+
+// Tries progressively looser WHERE clauses against a query URL, stopping at
+// the first tier that returns a hit. Exact match is always tried before any
+// substring match: a LIKE '%digits%' search (both sides wildcarded) against
+// a statewide table risks matching an entirely different parcel whose ID
+// merely *contains* the same digits somewhere -- which is what plotted the
+// wrong parcel for 9100410000. Field type (text vs numeric) isn't known in
+// advance, so both a quoted and unquoted exact comparison are tried; a tier
+// that doesn't apply to the field's actual type just errors and is skipped.
+async function arcQueryExactFirst(queryUrl, fields, digits, extraParams) {
+  const tiers = [
+    { where: fields.map(f => `${f}='${digits}'`).join(" OR "), tier: "exact" },
+    { where: fields.map(f => `${f}=${digits}`).join(" OR "), tier: "exact" },
+    { where: fields.map(f => `${f} LIKE '${digits}%'`).join(" OR "), tier: "prefix match" },
+    { where: fields.map(f => `${f} LIKE '%${digits}'`).join(" OR "), tier: "suffix match" },
+    { where: fields.map(f => `${f} LIKE '%${digits}%'`).join(" OR "), tier: "loose substring match -- verify" },
+  ];
+  for (const t of tiers) {
+    try {
+      const usp = new URLSearchParams({ f: "geojson", outSR: "4326", returnGeometry: "true", outFields: "*", resultRecordCount: 5, where: t.where, ...(extraParams || {}) });
+      const url = queryUrl + "?" + usp.toString();
+      lastQueryUrl = url;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const j = await res.json();
+      if (j.error) continue;
+      const features = j.features || [];
+      if (features.length) return { features, tier: t.tier };
+    } catch { /* try next tier */ }
+  }
+  return { features: [], tier: null };
+}
+
 async function resolveParcelViaCounty(rawInput, countyName) {
+  const digits = rawInput.replace(/[^0-9]/g, "");
   const candidates = await findCountyParcelServiceCandidates(countyName);
   for (const c of candidates) {
     try {
@@ -776,41 +810,52 @@ async function resolveParcelViaCounty(rawInput, countyName) {
         const fieldNames = (layer.fields || []).map(f => f.name);
         const apnField = findFieldByPattern(fieldNames, ["^apn$", "parcel.?id", "parcel.?num", "^pin$", "tax.?id"]);
         if (!apnField) continue;
-        const digits = rawInput.replace(/[^0-9]/g, "");
-        const j = await arcQuery(`${c.url}/${layer.id}/query`, { where: `${apnField} LIKE '%${digits}%'`, outFields: "*", geometryPrecision: "6", resultRecordCount: 5 });
-        if (j.features && j.features.length) return j.features;
+        const result = await arcQueryExactFirst(`${c.url}/${layer.id}/query`, [apnField], digits, { geometryPrecision: "6" });
+        if (result.features.length) return result;
       }
     } catch { /* try next candidate */ }
   }
-  return [];
+  return { features: [], tier: null };
 }
+
 async function resolveParcel(rawInput, countyHint) {
-  busy(true); setStatus("Querying WA statewide parcel service…"); showDebugUrl(null);
+  busy(true); showDebugUrl(null);
   const digits = rawInput.replace(/[^0-9]/g, "");
   if (digits.length < 5) { setStatus("That doesn't look like enough digits for a parcel number."); busy(false); return; }
 
-  let features = [], source = "statewide";
-  try {
-    const where = "ORIG_PARCEL_ID LIKE '%" + digits + "%' OR PARCEL_ID_NR LIKE '%" + digits + "%'";
-    const j = await arcQuery(WA_PARCELS_PRIMARY, { where, outFields: "*", geometryPrecision: "6", resultRecordCount: 5 });
-    features = j.features || [];
-  } catch (err) {
-    setStatus("Statewide parcel service " + (isNetworkError(err) ? "unreachable" : "error: " + err.message) + ". Trying per-county lookup…");
+  let features = [], source = null, tier = null;
+
+  // A named county's own parcel service is authoritative for that county's
+  // own numbering convention and can't collide with a different county's
+  // parcel -- try it first whenever a county is known, before the
+  // statewide layer's fuzzier cross-county search.
+  if (countyHint) {
+    setStatus("Searching " + countyHint + " County's own parcel service…");
+    const countyResult = await resolveParcelViaCounty(rawInput, countyHint);
+    if (countyResult.features.length) { features = countyResult.features; source = "county"; tier = countyResult.tier; }
   }
 
-  if (!features.length && countyHint) {
-    features = await resolveParcelViaCounty(rawInput, countyHint);
-    source = "county";
+  if (!features.length) {
+    setStatus("Querying WA statewide parcel service" + (countyHint ? " (no match in " + countyHint + " County's own service)" : "") + "…");
+    try {
+      const result = await arcQueryExactFirst(WA_PARCELS_PRIMARY, ["ORIG_PARCEL_ID", "PARCEL_ID_NR"], digits, { geometryPrecision: "6" });
+      if (result.features.length) { features = result.features; source = "statewide"; tier = result.tier; }
+    } catch (err) {
+      setStatus("Statewide parcel service " + (isNetworkError(err) ? "unreachable" : "error: " + err.message) + ".");
+    }
   }
 
   showDebugUrl(lastQueryUrl);
   if (!features.length) {
-    setStatus('No parcel found matching "' + rawInput + '"' + (countyHint ? " in " + countyHint + " County or the statewide dataset" : " in the statewide dataset (try entering a County in Manual entry to also search that county directly)") + ".");
+    setStatus('No parcel found matching "' + rawInput + '"' + (countyHint ? " in " + countyHint + " County's own service or the statewide dataset" : " in the statewide dataset (try entering a County in Manual entry to also search that county directly)") + ".");
     busy(false); return;
   }
+
   const multipleNote = features.length > 1
-    ? " (multiple parcels matched this number — showing the first; refine the number if this isn't the right one)"
+    ? " — multiple parcels matched this number, showing the first; refine the number if this isn't the right one."
     : "";
+  const looseMatch = tier && tier.includes("verify");
+  const tierNote = looseMatch ? " — matched via a loose substring search (" + tier + "), NOT an exact match; verify this is the correct parcel." : "";
 
   const f = features[0], p = f.properties;
   clearMapLayers();
@@ -821,10 +866,10 @@ async function resolveParcel(rawInput, countyHint) {
 
   const parcelId = pickField(p, ["PARCEL_ID_NR", "ORIG_PARCEL_ID", "APN", "PARCEL_ID", "PIN"]) || rawInput;
   const situs = [pickField(p, ["SITUS_ADDRESS"]), pickField(p, ["SITUS_CITY_NM"]), pickField(p, ["SITUS_ZIP_NR"])].filter(Boolean).join(", ");
-  const legal = "Parcel " + parcelId + (situs ? " — " + situs : "") + (source === "county" ? " (via county lookup)" : "");
+  const legal = "Parcel " + parcelId + (situs ? " — " + situs : "") + (source === "county" ? " (via " + countyHint + " County service)" : " (via statewide service)");
 
   await finishAtPoint(st.lat, st.lon, { legal, acres: st.acres, tag: "Parcel locate", assessorUrl: pickField(p, ["DATA_LINK"]) });
-  setStatus("Located parcel " + parcelId + multipleNote, multipleNote ? null : true);
+  setStatus("Located parcel " + parcelId + multipleNote + tierNote, (multipleNote || tierNote) ? null : true);
   busy(false);
 }
 
@@ -1389,6 +1434,7 @@ function renderContext(ctx) {
 function initEventListeners() {
   $("clearBtn").addEventListener("click", () => {
     clearMapLayers(); $("result").style.display = "none"; $("candidates").style.display = "none"; $("context").style.display = "none";
+    $("freeText").value = ""; $("fileInput").value = ""; $("fileName").textContent = "";
     setStatus(""); showDebugUrl(null);
   });
 
