@@ -1001,6 +1001,16 @@ function detectParcelCandidates(text) {
   }
   return out;
 }
+// Last-resort: a bare run of digits with no "Parcel"/"APN" label at all --
+// e.g. someone just pastes "3521334007" with nothing else. Only meant to be
+// used when nothing more specific (PLSS, address, labeled parcel, lat/lon)
+// was found anywhere in the text, since an unlabeled digit run is also what
+// a stray phone number, zip+4, or decimal-coordinate fragment looks like.
+function detectBareNumberCandidate(text) {
+  const stripped = text.replace(/-?\d{1,3}\.\d{3,8}/g, " "); // remove decimal coordinates first
+  const m = stripped.match(/\b(\d{6,15})\b/);
+  return m ? { type: "parcel", label: "Parcel " + m[1] + " (unlabeled number)", raw: m[1] } : null;
+}
 function detectAddressCandidates(text) {
   const out = [];
   // Optional post-directional (Ave N, St SE, ...) between the street suffix
@@ -1015,6 +1025,14 @@ function detectAddressCandidates(text) {
   }
   return out.slice(0, 3);
 }
+const WA_COUNTY_NAMES = [
+  "Adams", "Asotin", "Benton", "Chelan", "Clallam", "Clark", "Columbia", "Cowlitz",
+  "Douglas", "Ferry", "Franklin", "Garfield", "Grant", "Grays Harbor", "Island",
+  "Jefferson", "King", "Kitsap", "Kittitas", "Klickitat", "Lewis", "Lincoln", "Mason",
+  "Okanogan", "Pacific", "Pend Oreille", "Pierce", "San Juan", "Skagit", "Skamania",
+  "Snohomish", "Spokane", "Stevens", "Thurston", "Wahkiakum", "Walla Walla", "Whatcom",
+  "Whitman", "Yakima",
+];
 function detectCounty(text) {
   // Require a proper-noun run (1-3 capitalized words) right before "County"
   // rather than any lowercase word run, or a sentence like "...near Ephrata
@@ -1029,6 +1047,11 @@ function detectCounty(text) {
       const c = m[1].trim();
       if (!["development", "services", "planning", "director", "division", "permit"].some(x => c.toLowerCase().includes(x))) return c;
     }
+  }
+  // No "...County" phrase at all -- check for a bare mention of one of WA's
+  // 39 county names (e.g. just "Okanogan" with no "County" suffix).
+  for (const name of WA_COUNTY_NAMES) {
+    if (new RegExp("\\b" + name + "\\b", "i").test(text)) return name;
   }
   return null;
 }
@@ -1047,8 +1070,12 @@ function detectCandidates(text) {
   const address = detectAddressCandidates(text);
   const cands = [...plss, ...latlon, ...parcel, ...address];
   if (!cands.length) {
-    // Nothing specific found -- fall back to whatever city/county context we can read,
-    // so the tool still tries to give *something* rather than a dead end.
+    // Nothing labeled/specific found. Try, in order of usefulness: a bare
+    // unlabeled digit run (e.g. someone just pasted a parcel number with no
+    // "Parcel:" prefix), then fall back to city/county context alone so the
+    // tool still gives *something* rather than a dead end.
+    const bareNumber = detectBareNumberCandidate(text);
+    if (bareNumber) cands.push(bareNumber);
     const ctx = detectContext(text);
     if (ctx.city || ctx.county) {
       const label = [ctx.city, ctx.county ? ctx.county + " County" : null].filter(Boolean).join(", ");
