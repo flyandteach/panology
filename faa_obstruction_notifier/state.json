@@ -1,54 +1,42 @@
 {
-  "2026-ANM-1840-OE": {
-    "consecutive_failures": 2,
-    "history": [
-      {
-        "observed": "2026-09-04T00:00:00Z",
-        "status": "Evaluating"
-      }
-    ],
-    "last_checked": "2026-09-04T19:53:00Z",
-    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
-    "status": "Evaluating"
-  },
-  "2026-ANM-1841-OE": {
-    "consecutive_failures": 2,
-    "history": [
-      {
-        "observed": "2026-09-04T00:00:00Z",
-        "status": "Evaluating"
-      }
-    ],
-    "last_checked": "2026-09-04T19:53:00Z",
-    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
-    "status": "Evaluating"
-  },
   "2026-ANM-456-OE": {
-    "consecutive_failures": 2,
-    "history": [
-      {
-        "observed": "2026-09-04T00:00:00Z",
-        "status": "Pending"
-      }
-    ],
+    "status_code": "NPF",
+    "display_status": "Pending (NPF)",
     "last_checked": "2026-09-04T19:52:59Z",
-    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
-    "status": "Pending"
+    "consecutive_failures": 0,
+    "source": "confirmed live via FAA OE/AAA REST lookup",
+    "history": [
+      {"status_code": "NPF", "observed": "2026-09-04T19:52:59Z"}
+    ]
   },
   "2026-ANM-457-OE": {
-    "consecutive_failures": 2,
-    "history": [
-      {
-        "observed": "2026-09-04T00:00:00Z",
-        "status": "Pending"
-      }
-    ],
+    "status_code": "NPF",
+    "display_status": "Pending (NPF)",
     "last_checked": "2026-09-04T19:53:00Z",
-    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
-    "status": "Pending"
+    "consecutive_failures": 0,
+    "source": "confirmed live via FAA OE/AAA REST lookup",
+    "history": [
+      {"status_code": "NPF", "observed": "2026-09-04T19:53:00Z"}
+    ]
+  },
+  "2026-ANM-1840-OE": {
+    "status_code": "HLD-Eval",
+    "display_status": "Evaluating (HLD-Eval)",
+    "last_checked": "2026-09-04T19:53:00Z",
+    "consecutive_failures": 0,
+    "source": "confirmed live via FAA OE/AAA REST lookup",
+    "history": [
+      {"status_code": "HLD-Eval", "observed": "2026-09-04T19:53:00Z"}
+    ]
+  },
+  "2026-ANM-1841-OE": {
+    "status_code": "HLD-Eval",
+    "display_status": "Evaluating (HLD-Eval)",
+    "last_checked": "2026-09-04T19:53:00Z",
+    "consecutive_failures": 0,
+    "source": "confirmed live via FAA OE/AAA REST lookup",
+    "history": [
+      {"status_code": "HLD-Eval", "observed": "2026-09-04T19:53:00Z"}
+    ]
   }
 }

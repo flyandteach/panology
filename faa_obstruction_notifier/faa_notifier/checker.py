@@ -1,46 +1,59 @@
 """Fetches current case status from the FAA OE/AAA system for a given
 Aeronautical Study Number (ASN), e.g. "2026-ANM-456-OE".
 
-The FAA publishes a public, no-login REST lookup at:
+FAA's public, no-login REST lookup is:
     https://oeaaa.faa.gov/oeaaa/services/case/{asn}
-per the FAA's "OE/AAA External Web Services Guide". This module calls
-that endpoint but does not assume a fixed JSON schema: it scans whatever
-comes back (JSON, HTML, or plain text) for one of the fixed FAA case
-status words, since that vocabulary is stable regardless of response
-format. If FAA changes the endpoint shape entirely, `fetch_case_status`
-reports a failure rather than guessing, so callers can surface that the
-checker itself is broken instead of staying silent.
+(confirmed against FAA's own published WADL and, live, against real
+ASNs — see the "confirmed live" note below). It returns XML like:
+
+    <caseData><OECase>
+      ...
+      <statusCode>NPF</statusCode>
+      ...
+    </OECase></caseData>
+
+`statusCode` is FAA's raw internal case-status code, not the plain-English
+word ("Pending", "Evaluating", ...) shown on the OE/AAA web UI or on a
+printed Form 7460-1 — that label is derived client-side from the code and
+isn't in this API response. Two mappings are confirmed live (matched
+against the status printed on the originally submitted Form 7460-1 PDFs
+for the same ASNs on 2026-09-04):
+
+    NPF       -> "Pending"
+    HLD-Eval  -> "Evaluating"
+
+Beyond those two, FAA's published determination outcomes are
+"Determination of No Hazard" (DNH) and "Determination of Hazard" (DOH)
+per the FAA Program Handbook, but the exact statusCode string used for a
+finished case has not been observed directly, so it is NOT hardcoded as
+a fixed "terminal status" list here. Instead: ANY change in statusCode
+is treated as notify-worthy, so an unanticipated code still reaches the
+user instead of being silently misclassified.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from xml.etree import ElementTree
 
 import requests
 
 CASE_URL_TEMPLATE = "https://oeaaa.faa.gov/oeaaa/services/case/{asn}"
 
-# Fixed vocabulary of FAA OE/AAA case statuses (as seen on FAA Form 7460-1
-# case printouts, e.g. "Status: Pending", "Status: Evaluating").
-KNOWN_STATUSES = [
-    "Determined",
-    "Circularized",
-    "Evaluating",
-    "Interim",
-    "Withdrawn",
-    "Terminated",
-    "Denied",
-    "Pending",
-]
+# Confirmed live 2026-09-04 by cross-checking against the status printed on
+# the originally submitted Form 7460-1 PDFs for the same ASNs. Purely
+# cosmetic — an unmapped code is just shown as-is, never dropped.
+KNOWN_STATUS_LABELS = {
+    "NPF": "Pending",
+    "HLD-Eval": "Evaluating",
+}
 
-# A status reaching one of these means the aeronautical study is finished
-# and a determination has been issued.
-TERMINAL_STATUSES = {"determined", "denied", "withdrawn", "terminated"}
-
-_STATUS_RE = re.compile(
-    r"\b(" + "|".join(KNOWN_STATUSES) + r")\b", re.IGNORECASE
-)
+# Best-effort only, NOT verified against a live "Determined" case — codes
+# containing these substrings get a "likely a final determination" flag in
+# notifications, but this list gates only that cosmetic flag. Notification
+# itself fires on any statusCode change regardless of this list.
+LIKELY_TERMINAL_SUBSTRINGS = ["DNH", "DOH", "DET", "TERM", "DENIED", "WITHDR"]
 
 REQUEST_TIMEOUT_SECONDS = 20
 
@@ -49,7 +62,8 @@ REQUEST_TIMEOUT_SECONDS = 20
 class CaseCheckResult:
     asn: str
     ok: bool
-    status: str | None = None
+    status_code: str | None = None
+    status_label: str | None = None
     error: str | None = None
     checked_at: str = ""
     debug_http_status: int | None = None
@@ -62,17 +76,27 @@ class CaseCheckResult:
                 "%Y-%m-%dT%H:%M:%SZ"
             )
 
+    @property
+    def display_status(self) -> str | None:
+        if self.status_code is None:
+            return None
+        label = KNOWN_STATUS_LABELS.get(self.status_code)
+        return f"{label} ({self.status_code})" if label else self.status_code
 
-def _extract_status(body: str) -> str | None:
-    match = _STATUS_RE.search(body)
-    if not match:
+
+def _local_tag(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _extract_status_code(xml_text: str) -> str | None:
+    try:
+        root = ElementTree.fromstring(xml_text)
+    except ElementTree.ParseError:
         return None
-    # Normalize to the canonical capitalization from KNOWN_STATUSES.
-    found = match.group(1).lower()
-    for known in KNOWN_STATUSES:
-        if known.lower() == found:
-            return known
-    return match.group(1)
+    for el in root.iter():
+        if _local_tag(el.tag) == "statusCode" and el.text:
+            return el.text.strip()
+    return None
 
 
 def fetch_case_status(
@@ -87,7 +111,7 @@ def fetch_case_status(
         response = http.get(
             url,
             headers={
-                "Accept": "application/json, text/html;q=0.8, */*;q=0.5",
+                "Accept": "application/xml, text/xml;q=0.9, */*;q=0.5",
                 "User-Agent": "faa-obstruction-notifier/1.0",
             },
             timeout=REQUEST_TIMEOUT_SECONDS,
@@ -104,19 +128,25 @@ def fetch_case_status(
             asn=asn, ok=False, error=f"unexpected HTTP {response.status_code}"
         )
 
-    status = _extract_status(response.text)
-    if status is None:
+    status_code = _extract_status_code(response.text)
+    if status_code is None:
         return CaseCheckResult(
             asn=asn,
             ok=False,
-            error="could not find a known status keyword in the response "
+            error="could not find a <statusCode> element in the response "
             "(the FAA endpoint may have changed format)",
             debug_http_status=response.status_code,
             debug_content_type=response.headers.get("Content-Type"),
-            debug_body_snippet=response.text[:500],
+            debug_body_snippet=response.text[:1000],
         )
-    return CaseCheckResult(asn=asn, ok=True, status=status)
+    return CaseCheckResult(
+        asn=asn,
+        ok=True,
+        status_code=status_code,
+        status_label=KNOWN_STATUS_LABELS.get(status_code),
+    )
 
 
-def is_terminal(status: str) -> bool:
-    return status.lower() in TERMINAL_STATUSES
+def is_likely_terminal(status_code: str) -> bool:
+    upper = status_code.upper()
+    return any(sub in upper for sub in LIKELY_TERMINAL_SUBSTRINGS)

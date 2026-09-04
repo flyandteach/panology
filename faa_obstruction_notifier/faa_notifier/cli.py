@@ -77,27 +77,28 @@ def run_check(watchlist_path: Path, state_path: Path) -> int:
                 )
             continue
 
-        prior_status = prior.get("status")
+        prior_status_code = prior.get("status_code")
         history = prior.get("history", [])
 
-        if prior_status is not None and prior_status != result.status:
+        if prior_status_code is not None and prior_status_code != result.status_code:
             changes.append(
                 notify.Change(
                     asn=asn,
                     label=label,
-                    old_status=prior_status,
-                    new_status=result.status,
-                    is_terminal=checker.is_terminal(result.status),
+                    old_status=prior.get("display_status", prior_status_code),
+                    new_status=result.display_status,
+                    is_terminal=checker.is_likely_terminal(result.status_code),
                 )
             )
 
-        if prior_status != result.status:
+        if prior_status_code != result.status_code:
             history = history + [
-                {"status": result.status, "observed": result.checked_at}
+                {"status_code": result.status_code, "observed": result.checked_at}
             ]
 
         state[asn] = {
-            "status": result.status,
+            "status_code": result.status_code,
+            "display_status": result.display_status,
             "last_checked": result.checked_at,
             "consecutive_failures": 0,
             "history": history,
@@ -120,7 +121,12 @@ def run_check(watchlist_path: Path, state_path: Path) -> int:
 
 def run_selftest(asn: str) -> int:
     result = checker.fetch_case_status(asn)
-    print(f"asn={result.asn} ok={result.ok} status={result.status} error={result.error}")
+    print(
+        f"asn={result.asn} ok={result.ok} status_code={result.status_code} "
+        f"display_status={result.display_status} error={result.error}"
+    )
+    if result.debug_body_snippet:
+        print(f"body_snippet={result.debug_body_snippet!r}")
     return 0 if result.ok else 1
 
 
