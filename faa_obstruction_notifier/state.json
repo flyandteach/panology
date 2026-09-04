@@ -1,42 +1,50 @@
 {
-  "2026-ANM-456-OE": {
-    "status_code": "NPF",
-    "display_status": "Pending (NPF)",
-    "last_checked": "2026-09-04T19:52:59Z",
-    "consecutive_failures": 0,
-    "source": "confirmed live via FAA OE/AAA REST lookup",
-    "history": [
-      {"status_code": "NPF", "observed": "2026-09-04T19:52:59Z"}
-    ]
-  },
-  "2026-ANM-457-OE": {
-    "status_code": "NPF",
-    "display_status": "Pending (NPF)",
-    "last_checked": "2026-09-04T19:53:00Z",
-    "consecutive_failures": 0,
-    "source": "confirmed live via FAA OE/AAA REST lookup",
-    "history": [
-      {"status_code": "NPF", "observed": "2026-09-04T19:53:00Z"}
-    ]
-  },
   "2026-ANM-1840-OE": {
-    "status_code": "HLD-Eval",
-    "display_status": "Evaluating (HLD-Eval)",
-    "last_checked": "2026-09-04T19:53:00Z",
     "consecutive_failures": 0,
-    "source": "confirmed live via FAA OE/AAA REST lookup",
+    "display_status": "Evaluating (HLD-Eval)",
     "history": [
-      {"status_code": "HLD-Eval", "observed": "2026-09-04T19:53:00Z"}
-    ]
+      {
+        "observed": "2026-09-04T19:53:00Z",
+        "status_code": "HLD-Eval"
+      }
+    ],
+    "last_checked": "2026-09-04T20:01:26Z",
+    "status_code": "HLD-Eval"
   },
   "2026-ANM-1841-OE": {
-    "status_code": "HLD-Eval",
-    "display_status": "Evaluating (HLD-Eval)",
-    "last_checked": "2026-09-04T19:53:00Z",
     "consecutive_failures": 0,
-    "source": "confirmed live via FAA OE/AAA REST lookup",
+    "display_status": "Evaluating (HLD-Eval)",
     "history": [
-      {"status_code": "HLD-Eval", "observed": "2026-09-04T19:53:00Z"}
-    ]
+      {
+        "observed": "2026-09-04T19:53:00Z",
+        "status_code": "HLD-Eval"
+      }
+    ],
+    "last_checked": "2026-09-04T20:01:27Z",
+    "status_code": "HLD-Eval"
+  },
+  "2026-ANM-456-OE": {
+    "consecutive_failures": 0,
+    "display_status": "Pending (NPF)",
+    "history": [
+      {
+        "observed": "2026-09-04T19:52:59Z",
+        "status_code": "NPF"
+      }
+    ],
+    "last_checked": "2026-09-04T20:01:26Z",
+    "status_code": "NPF"
+  },
+  "2026-ANM-457-OE": {
+    "consecutive_failures": 0,
+    "display_status": "Pending (NPF)",
+    "history": [
+      {
+        "observed": "2026-09-04T19:53:00Z",
+        "status_code": "NPF"
+      }
+    ],
+    "last_checked": "2026-09-04T20:01:26Z",
+    "status_code": "NPF"
   }
 }
