@@ -2,8 +2,9 @@ name: FAA 7460 obstruction case check
 
 on:
   schedule:
-    # Every 4 hours.
-    - cron: "0 */4 * * *"
+    # Every Tuesday at 14:00 UTC (~6am Pacific / 9am Eastern). Adjust the
+    # hour if that's not a good time in your timezone.
+    - cron: "0 14 * * 2"
   workflow_dispatch: {}
 
 permissions:
