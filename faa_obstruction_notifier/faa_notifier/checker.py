@@ -52,6 +52,9 @@ class CaseCheckResult:
     status: str | None = None
     error: str | None = None
     checked_at: str = ""
+    debug_http_status: int | None = None
+    debug_content_type: str | None = None
+    debug_body_snippet: str | None = None
 
     def __post_init__(self) -> None:
         if not self.checked_at:
@@ -108,6 +111,9 @@ def fetch_case_status(
             ok=False,
             error="could not find a known status keyword in the response "
             "(the FAA endpoint may have changed format)",
+            debug_http_status=response.status_code,
+            debug_content_type=response.headers.get("Content-Type"),
+            debug_body_snippet=response.text[:500],
         )
     return CaseCheckResult(asn=asn, ok=True, status=status)
 

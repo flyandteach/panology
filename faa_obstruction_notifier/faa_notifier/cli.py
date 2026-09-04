@@ -60,6 +60,15 @@ def run_check(watchlist_path: Path, state_path: Path) -> int:
             state[asn]["consecutive_failures"] = streak
             state[asn]["last_error"] = result.error
             state[asn]["last_checked"] = result.checked_at
+            print(
+                f"[WARN] {asn}: check failed ({streak}x in a row): {result.error}"
+            )
+            if result.debug_body_snippet is not None:
+                print(
+                    f"        http_status={result.debug_http_status} "
+                    f"content_type={result.debug_content_type!r}"
+                )
+                print(f"        body_snippet={result.debug_body_snippet!r}")
             if streak >= FAILURE_STREAK_TO_ALERT:
                 failures.append(
                     notify.Failure(
@@ -97,8 +106,14 @@ def run_check(watchlist_path: Path, state_path: Path) -> int:
     save_state(state_path, state)
     notify.notify_all(changes, failures)
 
-    if not changes and not failures:
+    ok_count = sum(1 for e in watchlist if state.get(e["asn"], {}).get("consecutive_failures") == 0)
+    if not changes and ok_count == len(watchlist):
         print(f"Checked {len(watchlist)} case(s), no status changes.")
+    else:
+        print(
+            f"Checked {len(watchlist)} case(s): {ok_count} ok, "
+            f"{len(watchlist) - ok_count} failing, {len(changes)} changed."
+        )
 
     return 0
 
