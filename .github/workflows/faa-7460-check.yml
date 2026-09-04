@@ -1,0 +1,51 @@
+name: FAA 7460 obstruction case check
+
+on:
+  schedule:
+    # Every 4 hours.
+    - cron: "0 */4 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: faa_obstruction_notifier
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Check watchlist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional extra channels — set these as repo/org secrets to enable:
+          # SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, NOTIFY_EMAIL_TO, NOTIFY_EMAIL_FROM
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
+          NOTIFY_EMAIL_FROM: ${{ secrets.NOTIFY_EMAIL_FROM }}
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+          NOTIFY_WEBHOOK_FORMAT: ${{ secrets.NOTIFY_WEBHOOK_FORMAT }}
+        run: python -m faa_notifier.cli check
+
+      - name: Persist state
+        run: |
+          if ! git diff --quiet -- state.json; then
+            git config user.name "faa-7460-notifier-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add state.json
+            git commit -m "Update FAA 7460 case state [skip ci]"
+            git push
+          fi
