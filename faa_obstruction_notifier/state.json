@@ -1,34 +1,54 @@
 {
-  "2026-ANM-456-OE": {
-    "status": "Pending",
-    "last_checked": "2026-09-04T00:00:00Z",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
-    "history": [
-      {"status": "Pending", "observed": "2026-09-04T00:00:00Z"}
-    ]
-  },
-  "2026-ANM-457-OE": {
-    "status": "Pending",
-    "last_checked": "2026-09-04T00:00:00Z",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
-    "history": [
-      {"status": "Pending", "observed": "2026-09-04T00:00:00Z"}
-    ]
-  },
   "2026-ANM-1840-OE": {
-    "status": "Evaluating",
-    "last_checked": "2026-09-04T00:00:00Z",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
+    "consecutive_failures": 1,
     "history": [
-      {"status": "Evaluating", "observed": "2026-09-04T00:00:00Z"}
-    ]
+      {
+        "observed": "2026-09-04T00:00:00Z",
+        "status": "Evaluating"
+      }
+    ],
+    "last_checked": "2026-09-04T19:46:12Z",
+    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
+    "source": "seeded from submitted FAA Form 7460-1 PDF",
+    "status": "Evaluating"
   },
   "2026-ANM-1841-OE": {
-    "status": "Evaluating",
-    "last_checked": "2026-09-04T00:00:00Z",
-    "source": "seeded from submitted FAA Form 7460-1 PDF",
+    "consecutive_failures": 1,
     "history": [
-      {"status": "Evaluating", "observed": "2026-09-04T00:00:00Z"}
-    ]
+      {
+        "observed": "2026-09-04T00:00:00Z",
+        "status": "Evaluating"
+      }
+    ],
+    "last_checked": "2026-09-04T19:46:12Z",
+    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
+    "source": "seeded from submitted FAA Form 7460-1 PDF",
+    "status": "Evaluating"
+  },
+  "2026-ANM-456-OE": {
+    "consecutive_failures": 1,
+    "history": [
+      {
+        "observed": "2026-09-04T00:00:00Z",
+        "status": "Pending"
+      }
+    ],
+    "last_checked": "2026-09-04T19:46:12Z",
+    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
+    "source": "seeded from submitted FAA Form 7460-1 PDF",
+    "status": "Pending"
+  },
+  "2026-ANM-457-OE": {
+    "consecutive_failures": 1,
+    "history": [
+      {
+        "observed": "2026-09-04T00:00:00Z",
+        "status": "Pending"
+      }
+    ],
+    "last_checked": "2026-09-04T19:46:12Z",
+    "last_error": "could not find a known status keyword in the response (the FAA endpoint may have changed format)",
+    "source": "seeded from submitted FAA Form 7460-1 PDF",
+    "status": "Pending"
   }
 }
