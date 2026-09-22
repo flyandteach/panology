@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
-from .faa_registry import fetch_manufacturer_aircraft
+from .faa_registry import RegisteredAircraft, fetch_manufacturer_aircraft, parse_registry_zip
 from .opensky import OpenSkyClient
 from .store import FleetStore
 
@@ -12,15 +12,27 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, int, str], None]
 
 
-def refresh_registry(store: FleetStore) -> dict[str, int]:
-    """Pull the FAA registry and sync tracked manufacturers' rosters into the store."""
-    aircraft = fetch_manufacturer_aircraft()
-    by_manufacturer: dict[str, list] = {}
+def _sync_aircraft_to_store(store: FleetStore, aircraft: list[RegisteredAircraft]) -> dict[str, int]:
+    by_manufacturer: dict[str, list[RegisteredAircraft]] = {}
     for a in aircraft:
         by_manufacturer.setdefault(a.manufacturer, []).append(a)
     for manufacturer, group in by_manufacturer.items():
         store.replace_manufacturer_aircraft(manufacturer, group)
     return {manufacturer: len(group) for manufacturer, group in by_manufacturer.items()}
+
+
+def refresh_registry(store: FleetStore) -> dict[str, int]:
+    """Pull the FAA registry and sync tracked manufacturers' rosters into the store."""
+    return _sync_aircraft_to_store(store, fetch_manufacturer_aircraft())
+
+
+def refresh_registry_from_zip_bytes(store: FleetStore, zip_bytes: bytes) -> dict[str, int]:
+    """Sync tracked manufacturers' rosters from an already-downloaded ReleasableAircraft.zip.
+
+    Fallback for when this host can't download the FAA registry itself (e.g. the
+    FAA blocking this host's IP range).
+    """
+    return _sync_aircraft_to_store(store, parse_registry_zip(zip_bytes))
 
 
 def refresh_flights(

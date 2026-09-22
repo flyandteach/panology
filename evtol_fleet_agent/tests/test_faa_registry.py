@@ -7,7 +7,12 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from evtol_fleet.faa_registry import extract_master_csv, find_manufacturer_aircraft, parse_master_csv
+from evtol_fleet.faa_registry import (
+    extract_master_csv,
+    find_manufacturer_aircraft,
+    parse_master_csv,
+    parse_registry_zip,
+)
 
 HEADER = "N-NUMBER,NAME,MODE S CODE HEX,YEAR MFR,STATUS CODE,\n"
 
@@ -80,3 +85,12 @@ def test_extract_master_csv_raises_without_master_file():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_parse_registry_zip_end_to_end():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("MASTER.txt", HEADER + "".join(SAMPLE_ROWS))
+    aircraft = parse_registry_zip(buffer.getvalue())
+
+    assert {a.n_number for a in aircraft} == {"N12345", "N6789A", "N5551", "N9991"}

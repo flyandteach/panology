@@ -113,6 +113,16 @@ inactivity. There's no built-in persistence across restarts; you'll need to
 click Refresh again after a restart, or wire the store to external storage
 (e.g. a hosted Postgres/S3 bucket) if you need the cache to survive them.
 
+**If the FAA registry pull returns `403 Forbidden`:** `download_registry()`
+sends browser-like headers, which fixes most cases (the FAA blocks requests
+that don't look like a browser). If it still 403s, the FAA is likely
+blocking this host's IP range outright (common for cloud/datacenter IPs).
+There's no code fix for that — instead, use the **"FAA registry blocked?
+Upload it manually"** expander in the sidebar: download
+`ReleasableAircraft.zip` yourself from a browser on a normal network, then
+upload it there. It parses the same way and populates the cache
+identically.
+
 ## Reliability notes / known limitations
 
 - **Owner-name matching only catches aircraft registered directly under a

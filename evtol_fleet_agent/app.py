@@ -9,7 +9,7 @@ import streamlit as st
 from evtol_fleet import config
 from evtol_fleet.metrics import summarize
 from evtol_fleet.opensky import OpenSkyClient
-from evtol_fleet.pipeline import refresh_flights, refresh_registry
+from evtol_fleet.pipeline import refresh_flights, refresh_registry, refresh_registry_from_zip_bytes
 from evtol_fleet.store import FleetStore
 
 st.set_page_config(page_title="eVTOL Fleet Tracker", layout="wide")
@@ -31,6 +31,26 @@ def get_opensky_credentials() -> tuple[str | None, str | None]:
 
 store = FleetStore(config.DEFAULT_DB_PATH)
 
+
+def sync_flights(progress, start_fraction: float, days_back: int) -> None:
+    client_id, client_secret = get_opensky_credentials()
+    client = OpenSkyClient(client_id=client_id, client_secret=client_secret)
+    if not client.is_authenticated():
+        st.warning(
+            "No OpenSky credentials configured — using anonymous access, which is heavily "
+            "rate-limited and may fail. Set OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET in "
+            "the app's Secrets."
+        )
+    end = int(datetime.now(tz=timezone.utc).timestamp())
+    begin = end - int(days_back) * 24 * 3600
+
+    def on_progress(done: int, total: int, n_number: str) -> None:
+        fraction = start_fraction + (1 - start_fraction) * (done / max(total, 1))
+        progress.progress(min(fraction, 1.0), text=f"Syncing flights: {n_number} ({done}/{total})")
+
+    refresh_flights(store, client, begin, end, progress_callback=on_progress)
+
+
 with st.sidebar:
     st.header("Data")
     st.caption(
@@ -42,33 +62,40 @@ with st.sidebar:
         "Days of flight history to sync", min_value=1, max_value=365, value=30, step=1
     )
     if st.button("Refresh FAA + OpenSky data", use_container_width=True):
-        client_id, client_secret = get_opensky_credentials()
-        client = OpenSkyClient(client_id=client_id, client_secret=client_secret)
-        if not client.is_authenticated():
-            st.warning(
-                "No OpenSky credentials configured — using anonymous access, which is heavily "
-                "rate-limited and may fail. Set OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET in "
-                "the app's Secrets."
-            )
         progress = st.progress(0.0, text="Refreshing FAA registry...")
         try:
             registry_counts = refresh_registry(store)
             progress.progress(
                 0.2, text=f"Registry refreshed: {registry_counts or 'no tracked aircraft found'}"
             )
-            end = int(datetime.now(tz=timezone.utc).timestamp())
-            begin = end - int(days_back) * 24 * 3600
-
-            def on_progress(done: int, total: int, n_number: str) -> None:
-                fraction = 0.2 + 0.8 * (done / max(total, 1))
-                progress.progress(min(fraction, 1.0), text=f"Syncing flights: {n_number} ({done}/{total})")
-
-            refresh_flights(store, client, begin, end, progress_callback=on_progress)
+            sync_flights(progress, start_fraction=0.2, days_back=days_back)
             progress.progress(1.0, text="Done.")
             st.success("Data refreshed.")
             st.rerun()
         except Exception as e:
             st.error(f"Refresh failed: {e}")
+
+    with st.expander("FAA registry blocked? Upload it manually"):
+        st.caption(
+            "If the automatic FAA pull above fails with a 403, the FAA is likely blocking this "
+            "host's IP range. Download the file from a browser on a normal network — "
+            "[registry.faa.gov/database/ReleasableAircraft.zip]"
+            "(https://registry.faa.gov/database/ReleasableAircraft.zip) — and upload it here."
+        )
+        uploaded_zip = st.file_uploader("ReleasableAircraft.zip", type=["zip"])
+        if uploaded_zip is not None and st.button("Sync from uploaded file", use_container_width=True):
+            progress = st.progress(0.0, text="Parsing uploaded registry file...")
+            try:
+                registry_counts = refresh_registry_from_zip_bytes(store, uploaded_zip.read())
+                progress.progress(
+                    0.2, text=f"Registry refreshed: {registry_counts or 'no tracked aircraft found'}"
+                )
+                sync_flights(progress, start_fraction=0.2, days_back=days_back)
+                progress.progress(1.0, text="Done.")
+                st.success("Data refreshed.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
 
 aircraft_rows = store.list_aircraft()
 

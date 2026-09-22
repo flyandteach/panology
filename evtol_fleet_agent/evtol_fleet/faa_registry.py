@@ -32,8 +32,30 @@ def _match_manufacturer(n_number: str, owner_name: str) -> str | None:
     return None
 
 
+# registry.faa.gov's bot protection returns a bare 403 to requests that don't
+# look like a browser (no User-Agent/Accept/Referer). These headers mimic a
+# normal browser fetch, which is enough to get past it.
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/zip,application/octet-stream,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://registry.faa.gov/AircraftInquiry/",
+}
+
+
 def download_registry(url: str = config.FAA_REGISTRY_URL, timeout: int = 120) -> bytes:
-    response = requests.get(url, timeout=timeout)
+    response = requests.get(url, timeout=timeout, headers=BROWSER_HEADERS)
+    if response.status_code == 403:
+        raise RuntimeError(
+            "FAA registry returned 403 Forbidden even with browser-like headers. "
+            "This usually means the FAA is blocking requests from this host's IP range "
+            "(common for cloud/datacenter IPs, including Streamlit Community Cloud). "
+            "Try downloading ReleasableAircraft.zip from a residential/office network "
+            "and loading it via a local file instead."
+        )
     response.raise_for_status()
     return response.content
 
@@ -78,13 +100,25 @@ def find_manufacturer_aircraft(rows: Iterable[dict[str, str]]) -> list[Registere
     return results
 
 
+def parse_registry_zip(zip_bytes: bytes) -> list[RegisteredAircraft]:
+    """Extract tracked manufacturers' aircraft from an already-downloaded ReleasableAircraft.zip.
+
+    Useful as a fallback when the host running this can't download the zip itself
+    (e.g. the FAA blocking that host's IP range) — download it manually from
+    https://registry.faa.gov/database/ReleasableAircraft.zip elsewhere and pass
+    the bytes here instead.
+    """
+    master_bytes = extract_master_csv(zip_bytes)
+    rows = parse_master_csv(master_bytes)
+    return find_manufacturer_aircraft(rows)
+
+
 def fetch_manufacturer_aircraft(url: str = config.FAA_REGISTRY_URL) -> list[RegisteredAircraft]:
     """Download the FAA releasable aircraft registry and return tracked manufacturers' aircraft.
 
     Requires network access to registry.faa.gov, which is not reachable from every
-    sandboxed environment. Run this from a host with unrestricted outbound access.
+    sandboxed environment. Run this from a host with unrestricted outbound access,
+    or fall back to parse_registry_zip() with a manually downloaded copy.
     """
     zip_bytes = download_registry(url)
-    master_bytes = extract_master_csv(zip_bytes)
-    rows = parse_master_csv(master_bytes)
-    return find_manufacturer_aircraft(rows)
+    return parse_registry_zip(zip_bytes)
