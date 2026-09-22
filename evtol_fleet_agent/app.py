@@ -37,7 +37,7 @@ def get_opensky_credentials() -> tuple[str | None, str | None]:
 store = FleetStore(config.DEFAULT_DB_PATH)
 
 # The aircraft roster comes from a JSON snapshot committed to the repo by a scheduled
-# GitHub Actions job (see scripts/refresh_registry_snapshot.py), not a live FAA call —
+# GitHub Actions job (see scripts/monthly_refresh.py), not a live FAA call —
 # registry.faa.gov blocks requests from hosting platforms like Streamlit Community Cloud
 # outright, headers or not. This runs on every load; it's just a local file read, so it's
 # free and keeps the store in sync with whatever's currently deployed.
@@ -70,8 +70,9 @@ with st.sidebar:
         + (registry_generated_at or "never — the registry snapshot hasn't run yet")
     )
     st.caption(
-        "Flight history is cached locally and wiped whenever the app restarts on Streamlit "
-        "Community Cloud (redeploys, or waking from sleep) — click below to re-sync it."
+        "Flight history has a monthly baseline committed by CI (survives app restarts), "
+        "plus anything you sync live below — live syncs are session-only and reset to that "
+        "baseline on the next restart."
     )
     days_back = st.number_input(
         "Days of flight history to sync", min_value=1, max_value=365, value=30, step=1
@@ -88,10 +89,10 @@ with st.sidebar:
 
     with st.expander("Advanced: refresh the FAA aircraft roster now"):
         st.caption(
-            "The roster normally updates itself via a scheduled GitHub Actions job, so you "
-            "shouldn't need this. It's here for forcing an out-of-schedule refresh — note "
-            "registry.faa.gov typically blocks requests from cloud-hosted apps like this one, "
-            "so the live pull below may 403. If it does, download "
+            "The roster and flight history both update automatically via a monthly GitHub "
+            "Actions job, so you shouldn't need this. It's here for forcing an out-of-schedule "
+            "roster refresh — note registry.faa.gov typically blocks requests from cloud-hosted "
+            "apps like this one, so the live pull below may 403. If it does, download "
             "[ReleasableAircraft.zip](https://registry.faa.gov/database/ReleasableAircraft.zip) "
             "yourself from a normal network and upload it instead."
         )

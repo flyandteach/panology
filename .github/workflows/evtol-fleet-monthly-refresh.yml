@@ -1,0 +1,44 @@
+name: eVTOL fleet monthly refresh
+
+on:
+  schedule:
+    # 1st of every month at 13:00 UTC. The FAA roster changes rarely and OpenSky
+    # flight history only needs to stay roughly current, so monthly is enough —
+    # trigger manually (below) any time you need it sooner.
+    - cron: "0 13 1 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evtol_fleet_agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Refresh FAA registry roster + OpenSky flight history
+        env:
+          OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
+          OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
+        run: python scripts/monthly_refresh.py
+
+      - name: Commit changes if any
+        run: |
+          if ! git diff --quiet -- data/tracked_aircraft.json data/evtol_fleet.db; then
+            git config user.name "evtol-fleet-tracker-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add data/tracked_aircraft.json data/evtol_fleet.db
+            git commit -m "Monthly eVTOL fleet refresh: registry roster + OpenSky flights [skip ci]"
+            git pull --rebase origin "$GITHUB_REF_NAME"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi

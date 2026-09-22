@@ -161,3 +161,18 @@ def read_snapshot(path: str | Path) -> tuple[list[RegisteredAircraft], str | Non
     payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
     aircraft = [RegisteredAircraft(**row) for row in payload.get("aircraft", [])]
     return aircraft, payload.get("generated_at")
+
+
+def diff_aircraft(old: list[RegisteredAircraft], new: list[RegisteredAircraft]) -> dict[str, list[str]]:
+    """Compare two aircraft lists (e.g. last month's snapshot vs. a fresh pull) by N-number.
+
+    Returns {"added": [...], "removed": [...]} (N-numbers only, sorted). A "removed"
+    N-number doesn't necessarily mean deregistered — it also covers an aircraft that
+    changed owners away from a tracked manufacturer.
+    """
+    old_n_numbers = {a.n_number for a in old}
+    new_n_numbers = {a.n_number for a in new}
+    return {
+        "added": sorted(new_n_numbers - old_n_numbers),
+        "removed": sorted(old_n_numbers - new_n_numbers),
+    }

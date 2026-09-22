@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, int, str], None]
 
 
-def _sync_aircraft_to_store(store: FleetStore, aircraft: list[RegisteredAircraft]) -> dict[str, int]:
+def sync_aircraft_list(store: FleetStore, aircraft: list[RegisteredAircraft]) -> dict[str, int]:
+    """Sync an already-fetched aircraft list into the store, grouped by manufacturer."""
     by_manufacturer: dict[str, list[RegisteredAircraft]] = {}
     for a in aircraft:
         by_manufacturer.setdefault(a.manufacturer, []).append(a)
@@ -24,7 +25,7 @@ def _sync_aircraft_to_store(store: FleetStore, aircraft: list[RegisteredAircraft
 
 def refresh_registry(store: FleetStore) -> dict[str, int]:
     """Pull the FAA registry and sync tracked manufacturers' rosters into the store."""
-    return _sync_aircraft_to_store(store, fetch_manufacturer_aircraft())
+    return sync_aircraft_list(store, fetch_manufacturer_aircraft())
 
 
 def refresh_registry_from_zip_bytes(store: FleetStore, zip_bytes: bytes) -> dict[str, int]:
@@ -33,7 +34,7 @@ def refresh_registry_from_zip_bytes(store: FleetStore, zip_bytes: bytes) -> dict
     Fallback for when this host can't download the FAA registry itself (e.g. the
     FAA blocking this host's IP range).
     """
-    return _sync_aircraft_to_store(store, parse_registry_zip(zip_bytes))
+    return sync_aircraft_list(store, parse_registry_zip(zip_bytes))
 
 
 def sync_registry_from_snapshot(
@@ -42,12 +43,12 @@ def sync_registry_from_snapshot(
     """Load the CI-generated registry snapshot (data/tracked_aircraft.json) into the store.
 
     This is the primary, no-network way the deployed app gets its aircraft roster —
-    see scripts/refresh_registry_snapshot.py and the "eVTOL fleet registry refresh"
-    GitHub Actions workflow, which keep the snapshot current. Returns (counts per
+    see scripts/monthly_refresh.py and the "eVTOL fleet monthly refresh" GitHub
+    Actions workflow, which keep the snapshot current. Returns (counts per
     manufacturer, snapshot generation timestamp).
     """
     aircraft, generated_at = read_snapshot(snapshot_path or config.DEFAULT_REGISTRY_SNAPSHOT_PATH)
-    return _sync_aircraft_to_store(store, aircraft), generated_at
+    return sync_aircraft_list(store, aircraft), generated_at
 
 
 def refresh_flights(

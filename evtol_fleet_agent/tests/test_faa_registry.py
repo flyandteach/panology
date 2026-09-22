@@ -8,6 +8,8 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from evtol_fleet.faa_registry import (
+    RegisteredAircraft,
+    diff_aircraft,
     extract_master_csv,
     find_manufacturer_aircraft,
     parse_master_csv,
@@ -94,3 +96,35 @@ def test_parse_registry_zip_end_to_end():
     aircraft = parse_registry_zip(buffer.getvalue())
 
     assert {a.n_number for a in aircraft} == {"N12345", "N6789A", "N5551", "N9991"}
+
+
+JOBY = RegisteredAircraft(
+    n_number="N12345", icao24="a12345", manufacturer="Joby", owner_name="JOBY AERO INC",
+    year_mfr="2023", status_code="V",
+)
+ARCHER = RegisteredAircraft(
+    n_number="N6789A", icao24="a6789a", manufacturer="Archer", owner_name="ARCHER AVIATION INC",
+    year_mfr="2024", status_code="V",
+)
+BETA = RegisteredAircraft(
+    n_number="N5551", icao24="a5551", manufacturer="BETA", owner_name="BETA TECHNOLOGIES INC",
+    year_mfr="2022", status_code="V",
+)
+
+
+def test_diff_aircraft_detects_additions_and_removals():
+    diff = diff_aircraft(old=[JOBY, ARCHER], new=[JOBY, BETA])
+
+    assert diff["added"] == ["N5551"]
+    assert diff["removed"] == ["N6789A"]
+
+
+def test_diff_aircraft_no_changes():
+    diff = diff_aircraft(old=[JOBY, ARCHER], new=[JOBY, ARCHER])
+    assert diff == {"added": [], "removed": []}
+
+
+def test_diff_aircraft_against_empty_previous():
+    diff = diff_aircraft(old=[], new=[JOBY, ARCHER])
+    assert diff["added"] == ["N12345", "N6789A"]
+    assert diff["removed"] == []

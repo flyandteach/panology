@@ -3,6 +3,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# The FAA's human-facing download page; ReleasableAircraft.zip below is the actual
+# file it links to, and is what download_registry() fetches directly.
+FAA_REGISTRY_PAGE_URL = (
+    "https://www.faa.gov/licenses_certificates/aircraft_certification/aircraft_registry/"
+    "releasable_aircraft_download"
+)
 FAA_REGISTRY_URL = "https://registry.faa.gov/database/ReleasableAircraft.zip"
 
 OPENSKY_TOKEN_URL = (
