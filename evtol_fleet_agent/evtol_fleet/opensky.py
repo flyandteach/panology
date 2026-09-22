@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 import requests
+from requests.exceptions import ConnectionError, Timeout
 
 from . import config
 
@@ -65,25 +66,45 @@ class OpenSkyClient:
     def is_authenticated(self) -> bool:
         return bool(self.client_id and self.client_secret)
 
-    def _get_token(self) -> str | None:
+    def _get_token(self, max_retries: int = 3) -> str | None:
         if not self.is_authenticated():
             return None
         if self._token and time.time() < self._token_expiry - 30:
             return self._token
-        response = self.session.post(
-            self.token_url,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        self._token = payload["access_token"]
-        self._token_expiry = time.time() + float(payload.get("expires_in", 1800))
-        return self._token
+        backoff = 5.0
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                response = self.session.post(
+                    self.token_url,
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                    },
+                    timeout=30,
+                )
+            except (ConnectionError, Timeout) as e:
+                last_exc = e
+                logger.warning(
+                    "OpenSky auth request failed (attempt %s/%s): %s", attempt + 1, max_retries, e
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(backoff)
+                    backoff *= 2
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            self._token = payload["access_token"]
+            self._token_expiry = time.time() + float(payload.get("expires_in", 1800))
+            return self._token
+        raise RuntimeError(
+            f"Could not reach OpenSky's auth server after {max_retries} attempts "
+            f"({self.token_url}). This may be a transient network issue, or this host may be "
+            f"blocked the same way the FAA blocks it — retry in a bit, and if it keeps failing, "
+            f"the monthly CI-committed flight baseline (data/evtol_fleet.db) doesn't depend on "
+            f"this host's network at all."
+        ) from last_exc
 
     def _headers(self) -> dict[str, str]:
         token = self._get_token()
@@ -97,8 +118,22 @@ class OpenSkyClient:
         url = f"{self.api_base}/flights/aircraft"
         params = {"icao24": icao24.lower(), "begin": begin, "end": end}
         backoff = 5.0
+        last_exc: Exception | None = None
         for attempt in range(max_retries):
-            response = self.session.get(url, params=params, headers=self._headers(), timeout=60)
+            try:
+                response = self.session.get(url, params=params, headers=self._headers(), timeout=60)
+            except (ConnectionError, Timeout) as e:
+                last_exc = e
+                logger.warning(
+                    "OpenSky connection issue for %s (attempt %s/%s): %s",
+                    icao24,
+                    attempt + 1,
+                    max_retries,
+                    e,
+                )
+                time.sleep(backoff)
+                backoff *= 2
+                continue
             if response.status_code == 404:
                 return []
             if response.status_code == 429:
@@ -125,6 +160,10 @@ class OpenSkyClient:
                 )
                 for item in data
             ]
+        if last_exc is not None:
+            raise RuntimeError(
+                f"Could not reach OpenSky after {max_retries} attempts for {icao24}: {last_exc}"
+            ) from last_exc
         raise RuntimeError(f"OpenSky rate limit exceeded after {max_retries} retries for {icao24}")
 
     def get_flights_in_range(
