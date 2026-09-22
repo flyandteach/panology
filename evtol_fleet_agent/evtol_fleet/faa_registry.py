@@ -60,7 +60,18 @@ def download_registry(url: str = config.FAA_REGISTRY_URL, timeout: int = 120) ->
             "and loading it via a local file instead."
         )
     response.raise_for_status()
-    return response.content
+    content = response.content
+    # A 200 response isn't necessarily the real file: bot-protection can return an
+    # HTML challenge/interstitial page with a 200 status instead of a hard 403. Fail
+    # loudly here rather than let a bad response silently parse into zero aircraft.
+    if not content.startswith(b"PK"):
+        preview = content[:300].decode("utf-8", errors="replace")
+        raise RuntimeError(
+            "FAA registry response doesn't look like a zip file (no 'PK' magic bytes) — "
+            "likely a bot-protection interstitial page returned with a 200 status instead "
+            "of the real file. Response preview:\n" + preview
+        )
+    return content
 
 
 def extract_master_csv(zip_bytes: bytes) -> bytes:
