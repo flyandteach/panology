@@ -93,7 +93,7 @@ def test_parse_registry_zip_end_to_end():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
         zf.writestr("MASTER.txt", HEADER + "".join(SAMPLE_ROWS))
-    aircraft = parse_registry_zip(buffer.getvalue())
+    aircraft = parse_registry_zip(buffer.getvalue(), min_rows=0)
 
     assert {a.n_number for a in aircraft} == {"N12345", "N6789A", "N5551", "N9991"}
 
@@ -128,3 +128,46 @@ def test_diff_aircraft_against_empty_previous():
     diff = diff_aircraft(old=[], new=[JOBY, ARCHER])
     assert diff["added"] == ["N12345", "N6789A"]
     assert diff["removed"] == []
+
+
+# --- Regression: the real MASTER.txt starts with a UTF-8 byte-order mark ---
+
+import pytest
+
+
+def _zip_of(master_bytes: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("MASTER.txt", master_bytes)
+    return buffer.getvalue()
+
+
+def test_byte_order_mark_does_not_hide_n_number_column():
+    master = b"\xef\xbb\xbf" + sample_master_csv()
+    aircraft = parse_registry_zip(_zip_of(master), min_rows=0)
+    assert {a.n_number for a in aircraft} >= {"N12345", "N6789A", "N5551", "N9991"}
+
+
+def test_faa_style_padded_headers_and_values_are_handled():
+    master = (
+        b"\xef\xbb\xbfN-NUMBER,SERIAL NUMBER,NAME                          ,MODE S CODE HEX,YEAR MFR,STATUS CODE,\r\n"
+        b"314AB,SN1,JOBY AERO INC                  ,A3C1F2    ,2024,V ,\r\n"
+    )
+    aircraft = parse_registry_zip(_zip_of(master), min_rows=0)
+    assert [(a.n_number, a.icao24, a.manufacturer) for a in aircraft] == [("N314AB", "a3c1f2", "Joby")]
+
+
+def test_zero_matches_raises_instead_of_saving_empty_roster():
+    master = b"N-NUMBER,NAME,MODE S CODE HEX,\n1111,DELTA AIR LINES INC,A1111,\n"
+    with pytest.raises(ValueError, match="none matched"):
+        parse_registry_zip(_zip_of(master), min_rows=0)
+
+
+def test_truncated_registry_raises():
+    with pytest.raises(ValueError, match="truncated"):
+        parse_registry_zip(_zip_of(sample_master_csv()))
+
+
+def test_missing_columns_raises():
+    with pytest.raises(ValueError, match="missing expected column"):
+        list(parse_master_csv(b"FOO,BAR\n1,2\n"))

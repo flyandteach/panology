@@ -82,11 +82,32 @@ def extract_master_csv(zip_bytes: bytes) -> bytes:
         return zf.read(candidates[0])
 
 
+REQUIRED_COLUMNS = ("N-NUMBER", "NAME", "MODE S CODE HEX")
+
+# The real registry lists ~300k aircraft. Far fewer rows means a truncated or
+# wrong file, which must never be allowed to overwrite a good roster.
+MIN_EXPECTED_REGISTRY_ROWS = 100_000
+
+
+def _clean_key(key: str | None) -> str:
+    # MASTER.txt starts with a UTF-8 byte-order mark. str.strip() does not remove
+    # U+FEFF, so without this the first column is "\ufeffN-NUMBER", every lookup of
+    # "N-NUMBER" comes back empty, and every aircraft is silently skipped.
+    return (key or "").replace("\ufeff", "").strip().upper()
+
+
 def parse_master_csv(master_csv_bytes: bytes) -> Iterable[dict[str, str]]:
-    text = master_csv_bytes.decode("utf-8", errors="replace")
+    text = master_csv_bytes.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text))
+    header = {_clean_key(name) for name in (reader.fieldnames or [])}
+    missing = [col for col in REQUIRED_COLUMNS if col not in header]
+    if missing:
+        raise ValueError(
+            f"FAA MASTER.txt is missing expected column(s) {missing}; found {sorted(header)[:12]}. "
+            "The FAA may have changed the file layout."
+        )
     for row in reader:
-        yield {(key or "").strip(): (value or "").strip() for key, value in row.items()}
+        yield {_clean_key(key): (value or "").strip() for key, value in row.items() if key is not None}
 
 
 def find_manufacturer_aircraft(rows: Iterable[dict[str, str]]) -> list[RegisteredAircraft]:
@@ -114,7 +135,9 @@ def find_manufacturer_aircraft(rows: Iterable[dict[str, str]]) -> list[Registere
     return results
 
 
-def parse_registry_zip(zip_bytes: bytes) -> list[RegisteredAircraft]:
+def parse_registry_zip(
+    zip_bytes: bytes, min_rows: int = MIN_EXPECTED_REGISTRY_ROWS
+) -> list[RegisteredAircraft]:
     """Extract tracked manufacturers' aircraft from an already-downloaded ReleasableAircraft.zip.
 
     Useful as a fallback when the host running this can't download the zip itself
@@ -123,8 +146,19 @@ def parse_registry_zip(zip_bytes: bytes) -> list[RegisteredAircraft]:
     the bytes here instead.
     """
     master_bytes = extract_master_csv(zip_bytes)
-    rows = parse_master_csv(master_bytes)
-    return find_manufacturer_aircraft(rows)
+    rows = list(parse_master_csv(master_bytes))
+    if len(rows) < min_rows:
+        raise ValueError(
+            f"FAA registry has only {len(rows):,} rows (expected over {min_rows:,}); "
+            "the download looks truncated or wrong."
+        )
+    aircraft = find_manufacturer_aircraft(rows)
+    if not aircraft:
+        raise ValueError(
+            f"Parsed {len(rows):,} registry rows but none matched Joby/Archer/BETA. That is "
+            "almost certainly a parsing problem, not reality; refusing to save an empty roster."
+        )
+    return aircraft
 
 
 def fetch_manufacturer_aircraft(url: str = config.FAA_REGISTRY_URL) -> list[RegisteredAircraft]:
