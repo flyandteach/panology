@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import zipfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterable
 
 import requests
@@ -122,3 +125,28 @@ def fetch_manufacturer_aircraft(url: str = config.FAA_REGISTRY_URL) -> list[Regi
     """
     zip_bytes = download_registry(url)
     return parse_registry_zip(zip_bytes)
+
+
+def write_snapshot(aircraft: list[RegisteredAircraft], path: str | Path) -> None:
+    """Write tracked aircraft to a small JSON snapshot the app can read without a live FAA call.
+
+    Intended to be run from an environment with unrestricted FAA egress (e.g. a
+    scheduled CI job) and the result committed to the repo.
+    """
+    payload = {
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
+        "aircraft": [asdict(a) for a in sorted(aircraft, key=lambda a: a.n_number)],
+    }
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def read_snapshot(path: str | Path) -> tuple[list[RegisteredAircraft], str | None]:
+    """Read a JSON snapshot written by write_snapshot(). Returns (aircraft, generated_at)."""
+    snapshot_path = Path(path)
+    if not snapshot_path.exists():
+        return [], None
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    aircraft = [RegisteredAircraft(**row) for row in payload.get("aircraft", [])]
+    return aircraft, payload.get("generated_at")

@@ -5,25 +5,42 @@ aircraft registry, cross-references flight activity from OpenSky Network, and
 shows total flights and total flight time per aircraft (or per manufacturer) in
 a Streamlit dashboard.
 
-Unlike a single web app that fetches everything live on each page load, this
-splits the work into two steps so failures are isolated and cheap to retry:
+## Architecture
 
-1. **Refresh** (`scripts/refresh.py`) pulls fresh data from the FAA and OpenSky
-   into a local SQLite cache (`data/evtol_fleet.db`). This is the step that can
-   hit network/rate-limit issues, so it's run separately and can be re-run
-   safely — flight inserts are deduplicated and each aircraft resumes from its
-   last synced timestamp.
-2. **Dashboard** (`app.py`) only reads from the local cache, so it loads
-   instantly and never depends on FAA/OpenSky being reachable at view time.
+`registry.faa.gov` blocks requests from cloud-hosting platforms (including
+Streamlit Community Cloud) outright — browser-like headers don't help, it's an
+IP-range block. So the FAA registry is **not** fetched live by the deployed
+app. Instead:
+
+1. A scheduled GitHub Actions workflow (`.github/workflows/evtol-fleet-registry-refresh.yml`,
+   weekly) runs `scripts/refresh_registry_snapshot.py` from CI, which *does*
+   have unrestricted FAA egress, and commits the result to
+   `data/tracked_aircraft.json` — a small JSON list of Joby/Archer/BETA
+   aircraft (N-number, ICAO24, owner name, etc.).
+2. `app.py` reads that committed file on every page load (`sync_registry_from_snapshot`)
+   — a local file read, no network call, so it always works regardless of the
+   FAA's blocking. This means **you never have to do anything to get the
+   aircraft roster** — it's already in the repo, kept fresh automatically.
+3. Only OpenSky flight history is fetched live, on demand, via the sidebar's
+   **Sync latest OpenSky flights** button — OpenSky hasn't shown the same
+   blocking behavior, and flight data is time-sensitive so it makes sense to
+   pull on demand rather than bake into the weekly snapshot.
+
+Flight data itself is cached in a local SQLite file so the dashboard doesn't
+re-hit OpenSky on every view; see the ephemeral-storage note below for how
+that interacts with Streamlit Community Cloud specifically.
 
 ## How it works
 
-- `evtol_fleet/faa_registry.py` downloads the FAA's `ReleasableAircraft.zip`
-  (the public aircraft registry), parses `MASTER.txt`, and matches the
-  registrant `NAME` field against configurable name patterns per manufacturer
-  (`evtol_fleet/config.py: MANUFACTURER_NAME_PATTERNS`). It extracts each
+- `evtol_fleet/faa_registry.py` parses the FAA's `MASTER.txt` (from
+  `ReleasableAircraft.zip`) and matches the registrant `NAME` field against
+  configurable name patterns per manufacturer
+  (`evtol_fleet/config.py: MANUFACTURER_NAME_PATTERNS`), extracting each
   matching aircraft's N-Number and Mode S hex code (ICAO24), which OpenSky
-  needs to identify the aircraft.
+  needs to identify the aircraft. `write_snapshot`/`read_snapshot` save/load
+  that result as JSON.
+- `scripts/refresh_registry_snapshot.py` is the CI entry point: downloads the
+  registry, matches manufacturers, writes `data/tracked_aircraft.json`.
 - `evtol_fleet/opensky.py` queries OpenSky's `/flights/aircraft` REST endpoint
   per aircraft. OpenSky caps each request to a 30-day window, so longer ranges
   are automatically chunked (`iter_windows`) and 429 responses are retried with
@@ -55,41 +72,45 @@ export OPENSKY_CLIENT_ID=your-client-id
 export OPENSKY_CLIENT_SECRET=your-client-secret
 ```
 
-Without these, `scripts/refresh.py` still runs but will likely hit rate
-limits quickly.
+Without these, flight sync still runs but will likely hit rate limits
+quickly.
 
 ## Usage
-
-Pull the FAA registry and the last 30 days of flights for all tracked
-manufacturers:
-
-```bash
-python scripts/refresh.py
-```
-
-Useful flags:
-
-```bash
-python scripts/refresh.py --days 90                # backfill further for first-time sync
-python scripts/refresh.py --manufacturer Joby       # only sync one manufacturer's flights
-python scripts/refresh.py --skip-registry           # only refresh flights
-python scripts/refresh.py --skip-flights            # only refresh the FAA roster
-```
-
-Then launch the dashboard:
 
 ```bash
 streamlit run app.py
 ```
 
-Use the sidebar to filter by manufacturer or specific N-numbers. The
-dashboard shows total aircraft selected, total flights, total flight hours,
-a per-aircraft table, a flights-per-aircraft chart, and a raw flight log.
+The aircraft roster (`data/tracked_aircraft.json`) loads automatically — no
+setup step needed. Use the sidebar's **Sync latest OpenSky flights** button
+to pull flight history for those aircraft, then filter by manufacturer or
+N-number. The dashboard shows total aircraft selected, total flights, total
+flight hours, a per-aircraft table, a flights-per-aircraft chart, and a raw
+flight log.
 
-The dashboard's sidebar also has a **Refresh FAA + OpenSky data** button that
-runs the same sync in-process (with a progress bar), so you don't have to use
-the CLI at all — this is what makes the app self-contained on Streamlit
-Community Cloud, which doesn't give you a terminal to run scripts.
+There's also a CLI equivalent for local/manual use (`scripts/refresh.py`),
+which does a live FAA pull + OpenSky sync in one shot — useful outside of CI
+if you're on a network the FAA doesn't block:
+
+```bash
+python scripts/refresh.py --days 90
+```
+
+## Keeping the roster fresh
+
+Normally you don't need to do anything — the GitHub Actions workflow refreshes
+`data/tracked_aircraft.json` weekly and commits it automatically. To run it
+early (e.g. right after adding a manufacturer name pattern), trigger it
+manually from the repo's **Actions** tab → "eVTOL fleet registry refresh" →
+**Run workflow**. Note: the `schedule` trigger only fires for workflow files
+on the repo's default branch, so the weekly cadence won't kick in until this
+is merged — `workflow_dispatch` (the manual "Run workflow" button) works on
+any branch, though.
+
+If you need a one-off refresh without CI at all, the app's sidebar has an
+**Advanced: refresh the FAA aircraft roster now** expander with a live-pull
+button and a manual-zip-upload fallback (download
+`ReleasableAircraft.zip` yourself from a normal network, upload it there).
 
 ## Deploying to Streamlit Community Cloud
 
@@ -103,25 +124,16 @@ Community Cloud, which doesn't give you a terminal to run scripts.
    ```
    (`app.py` reads `st.secrets` first, falling back to environment variables
    for local runs.)
-4. Deploy, then open the app and click **Refresh FAA + OpenSky data** in the
-   sidebar to populate the cache — it starts empty on every deploy.
+4. Deploy — the roster shows up immediately from the committed snapshot.
+   Click **Sync latest OpenSky flights** in the sidebar to populate flight
+   data.
 
-**Storage is ephemeral on Community Cloud.** The SQLite cache lives on the
-container's local disk, which is wiped whenever the app restarts — on every
-redeploy, and whenever the app wakes up after going to sleep from
-inactivity. There's no built-in persistence across restarts; you'll need to
-click Refresh again after a restart, or wire the store to external storage
-(e.g. a hosted Postgres/S3 bucket) if you need the cache to survive them.
-
-**If the FAA registry pull returns `403 Forbidden`:** `download_registry()`
-sends browser-like headers, which fixes most cases (the FAA blocks requests
-that don't look like a browser). If it still 403s, the FAA is likely
-blocking this host's IP range outright (common for cloud/datacenter IPs).
-There's no code fix for that — instead, use the **"FAA registry blocked?
-Upload it manually"** expander in the sidebar: download
-`ReleasableAircraft.zip` yourself from a browser on a normal network, then
-upload it there. It parses the same way and populates the cache
-identically.
+**Storage is ephemeral on Community Cloud.** The SQLite flight cache lives on
+the container's local disk, which is wiped whenever the app restarts — on
+every redeploy, and whenever the app wakes up after going to sleep from
+inactivity. The aircraft roster reloads itself automatically either way
+(it's read from the repo, not the wiped disk); only flight history needs a
+re-sync after a restart.
 
 ## Reliability notes / known limitations
 
@@ -138,12 +150,10 @@ identically.
   time. Test aircraft that don't broadcast ADS-B, or fly outside OpenSky's
   ground-station/satellite coverage, won't show up.
 - **OpenSky's free-tier history depth and rate limits are OpenSky's, not
-  this tool's.** Large fleets or long backfills may need multiple
-  `scripts/refresh.py` runs across separate days.
-- The FAA registry and OpenSky must both be reachable from wherever you run
-  `scripts/refresh.py`. If you're running this from a network-restricted
-  sandbox, run the refresh step from a host with normal outbound internet
-  access, then copy `data/evtol_fleet.db` to wherever the dashboard runs.
+  this tool's.** Large fleets or long backfills may need multiple sync runs.
+- **The registry roster is only as fresh as the last CI run** (weekly by
+  default). A brand-new aircraft registration could take up to a week to
+  appear; trigger the workflow manually if you need it sooner.
 
 ## Tests
 
@@ -152,6 +162,6 @@ pip install pytest
 pytest tests/
 ```
 
-Tests cover FAA registry parsing/matching, OpenSky window chunking, the
-SQLite cache, and flight-time aggregation using fixture data — they don't
-hit the FAA or OpenSky network.
+Tests cover FAA registry parsing/matching, the JSON snapshot round trip,
+OpenSky window chunking, the SQLite cache, and flight-time aggregation using
+fixture data — they don't hit the FAA or OpenSky network.

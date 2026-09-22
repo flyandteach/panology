@@ -9,7 +9,12 @@ import streamlit as st
 from evtol_fleet import config
 from evtol_fleet.metrics import summarize
 from evtol_fleet.opensky import OpenSkyClient
-from evtol_fleet.pipeline import refresh_flights, refresh_registry, refresh_registry_from_zip_bytes
+from evtol_fleet.pipeline import (
+    refresh_flights,
+    refresh_registry,
+    refresh_registry_from_zip_bytes,
+    sync_registry_from_snapshot,
+)
 from evtol_fleet.store import FleetStore
 
 st.set_page_config(page_title="eVTOL Fleet Tracker", layout="wide")
@@ -30,6 +35,13 @@ def get_opensky_credentials() -> tuple[str | None, str | None]:
 
 
 store = FleetStore(config.DEFAULT_DB_PATH)
+
+# The aircraft roster comes from a JSON snapshot committed to the repo by a scheduled
+# GitHub Actions job (see scripts/refresh_registry_snapshot.py), not a live FAA call —
+# registry.faa.gov blocks requests from hosting platforms like Streamlit Community Cloud
+# outright, headers or not. This runs on every load; it's just a local file read, so it's
+# free and keeps the store in sync with whatever's currently deployed.
+_, registry_generated_at = sync_registry_from_snapshot(store)
 
 
 def sync_flights(progress, start_fraction: float, days_back: int) -> None:
@@ -54,45 +66,56 @@ def sync_flights(progress, start_fraction: float, days_back: int) -> None:
 with st.sidebar:
     st.header("Data")
     st.caption(
-        "Cached locally in SQLite. On Streamlit Community Cloud this cache is wiped whenever "
-        "the app restarts (redeploys, or waking from sleep) — re-run the refresh below if the "
-        "dashboard looks empty."
+        "Aircraft roster last updated: "
+        + (registry_generated_at or "never — the registry snapshot hasn't run yet")
+    )
+    st.caption(
+        "Flight history is cached locally and wiped whenever the app restarts on Streamlit "
+        "Community Cloud (redeploys, or waking from sleep) — click below to re-sync it."
     )
     days_back = st.number_input(
         "Days of flight history to sync", min_value=1, max_value=365, value=30, step=1
     )
-    if st.button("Refresh FAA + OpenSky data", use_container_width=True):
-        progress = st.progress(0.0, text="Refreshing FAA registry...")
+    if st.button("Sync latest OpenSky flights", use_container_width=True):
+        progress = st.progress(0.0, text="Syncing flights...")
         try:
-            registry_counts = refresh_registry(store)
-            progress.progress(
-                0.2, text=f"Registry refreshed: {registry_counts or 'no tracked aircraft found'}"
-            )
-            sync_flights(progress, start_fraction=0.2, days_back=days_back)
+            sync_flights(progress, start_fraction=0.0, days_back=days_back)
             progress.progress(1.0, text="Done.")
-            st.success("Data refreshed.")
+            st.success("Flights synced.")
             st.rerun()
         except Exception as e:
-            st.error(f"Refresh failed: {e}")
+            st.error(f"Sync failed: {e}")
 
-    with st.expander("FAA registry blocked? Upload it manually"):
+    with st.expander("Advanced: refresh the FAA aircraft roster now"):
         st.caption(
-            "If the automatic FAA pull above fails with a 403, the FAA is likely blocking this "
-            "host's IP range. Download the file from a browser on a normal network — "
-            "[registry.faa.gov/database/ReleasableAircraft.zip]"
-            "(https://registry.faa.gov/database/ReleasableAircraft.zip) — and upload it here."
+            "The roster normally updates itself via a scheduled GitHub Actions job, so you "
+            "shouldn't need this. It's here for forcing an out-of-schedule refresh — note "
+            "registry.faa.gov typically blocks requests from cloud-hosted apps like this one, "
+            "so the live pull below may 403. If it does, download "
+            "[ReleasableAircraft.zip](https://registry.faa.gov/database/ReleasableAircraft.zip) "
+            "yourself from a normal network and upload it instead."
         )
-        uploaded_zip = st.file_uploader("ReleasableAircraft.zip", type=["zip"])
+        if st.button("Try live FAA pull", use_container_width=True):
+            progress = st.progress(0.0, text="Refreshing FAA registry...")
+            try:
+                registry_counts = refresh_registry(store)
+                progress.progress(
+                    1.0, text=f"Registry refreshed: {registry_counts or 'no tracked aircraft found'}"
+                )
+                st.success("Registry refreshed.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Refresh failed: {e}")
+
+        uploaded_zip = st.file_uploader("Or upload ReleasableAircraft.zip", type=["zip"])
         if uploaded_zip is not None and st.button("Sync from uploaded file", use_container_width=True):
             progress = st.progress(0.0, text="Parsing uploaded registry file...")
             try:
                 registry_counts = refresh_registry_from_zip_bytes(store, uploaded_zip.read())
                 progress.progress(
-                    0.2, text=f"Registry refreshed: {registry_counts or 'no tracked aircraft found'}"
+                    1.0, text=f"Registry refreshed: {registry_counts or 'no tracked aircraft found'}"
                 )
-                sync_flights(progress, start_fraction=0.2, days_back=days_back)
-                progress.progress(1.0, text="Done.")
-                st.success("Data refreshed.")
+                st.success("Registry refreshed.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Sync failed: {e}")
@@ -101,8 +124,9 @@ aircraft_rows = store.list_aircraft()
 
 if not aircraft_rows:
     st.warning(
-        "No aircraft in the local cache yet. Click **Refresh FAA + OpenSky data** in the "
-        "sidebar to pull the FAA registry and OpenSky flight history."
+        "No aircraft in the roster yet. The scheduled GitHub Actions job hasn't populated "
+        "`data/tracked_aircraft.json` — trigger it manually from the repo's Actions tab, or use "
+        "**Advanced: refresh the FAA aircraft roster now** in the sidebar."
     )
     st.stop()
 
@@ -115,7 +139,7 @@ with st.sidebar:
         a["n_number"] for a in aircraft_rows if a["manufacturer"] in selected_manufacturers
     )
     selected_n_numbers = st.multiselect("N-Number", available_n_numbers, default=available_n_numbers)
-    st.caption(f"{len(aircraft_rows)} aircraft in local cache.")
+    st.caption(f"{len(aircraft_rows)} aircraft in roster.")
 
 filtered_aircraft = [a for a in aircraft_rows if a["n_number"] in selected_n_numbers]
 

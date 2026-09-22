@@ -17,6 +17,14 @@ OPENSKY_MAX_WINDOW_SECONDS = 29 * 24 * 3600
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = os.environ.get("EVTOL_DB_PATH", str(PACKAGE_ROOT / "data" / "evtol_fleet.db"))
 
+# Committed to the repo by the "eVTOL fleet registry refresh" GitHub Actions workflow,
+# which runs on a schedule from CI (unrestricted egress) rather than from the deployed
+# app, since registry.faa.gov's bot/IP protection can block hosting-platform requests
+# outright. The app reads this file directly — no live FAA call needed at runtime.
+DEFAULT_REGISTRY_SNAPSHOT_PATH = os.environ.get(
+    "EVTOL_REGISTRY_SNAPSHOT_PATH", str(PACKAGE_ROOT / "data" / "tracked_aircraft.json")
+)
+
 OPENSKY_CLIENT_ID = os.environ.get("OPENSKY_CLIENT_ID")
 OPENSKY_CLIENT_SECRET = os.environ.get("OPENSKY_CLIENT_SECRET")
 
