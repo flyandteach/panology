@@ -12,7 +12,7 @@ from .models import DailyExpenseLine, OtherExpense, TravelIntake
 
 
 # ---------------------------------------------------------------------------
-# Actual 133-103 template column layout (verified from template file):
+# Actual 133-103 template column layout (verified from SAF_Tacoma_8_26.xlsx):
 #
 # Header rows 4-7:
 #   Row 4 labels: A4=Name, AY4=Employee ID, CH4=Official Station
@@ -20,7 +20,7 @@ from .models import DailyExpenseLine, OtherExpense, TravelIntake
 #   Row 6 labels: A6=Address, AY6=City, BP6=State, BU6=Zip, CH6=Official Residence
 #   Row 7 data:   A7=address, AY7=city, BP7=state, BU7=zip, CH7=official_residence
 #
-# Expense rows 10-21 (page 1), 48-80 (page 2):
+# Expense rows 10-22 (page 1, 13 rows), 64-96 (page 2, 33 rows):
 #   A=date, G=day, J=from, X=to, AL=depart, AR=return,
 #   AX=breakfast, AZ=lunch, BB=dinner, BD=lodging,
 #   BK=miles, BP=mileage_rate, BU=pov_reason,
@@ -28,16 +28,26 @@ from .models import DailyExpenseLine, OtherExpense, TravelIntake
 #   CU=purpose
 #
 # Totals / metadata:
-#   A28=last_date, Z28=regular_work_hours, A30=remarks
-#   BV27=travel_advance (formula CN27=CN25-BV27)
-#   AI43=signature_date
+#   Row 23: page 1 totals (formulas)
+#   Row 24: totals from 2nd page (formulas)
+#   Row 26: totals both pages (formulas)
+#   A28=label "Last Date", A29=last_date value
+#   Z28=label "Regular Work Hours", Z29=regular_work_hours value
+#   A30=label "Remarks", A31=remarks value
+#   BK28=label "Less Travel Advance:", BV28=travel_advance value
+#   CN28=formula(CN26-BV28)
 #
-# Account codes rows 34-38:
-#   G=work_order, U=group, AA=org_code, AJ=object_code,
-#   BH=work_op, BN=bal_sheet, BT=amount
+# Account codes rows 38-45 (left columns):
+#   A=program, I=task_order/work_order, R=fund, X=dept/org_code,
+#   AD=unit, AJ=subunit, AM=object_code, AS=activity,
+#   AY=location, BE=appr_unit/appropriation, BL=function, BR=bal_sheet, BX=amount
 #
-# Other expenses rows 34-39 (right-hand columns):
-#   BZ=date, CF=paid_to, CY=for_what, DS=amount
+# Other expenses rows 38-45 (right columns):
+#   CF=date, CJ=paid_to, DA=for_what, DS=amount
+#
+# Signature / page 2 header:
+#   AI50=signature_date
+#   A53=name, AY53=emp_id, BU53=last_date
 # ---------------------------------------------------------------------------
 
 
@@ -64,10 +74,7 @@ def _excel_time(value) -> Optional[float]:
 
 
 def _resolve_cell(ws, cell_ref: str) -> str:
-    """Return the top-left cell of any merged range containing cell_ref.
-
-    openpyxl raises AttributeError if you write to a non-top-left merged cell.
-    """
+    """Return the top-left cell of any merged range containing cell_ref."""
     from openpyxl.utils import range_boundaries
     col_letter = cell_ref.rstrip("0123456789")
     row_num = int(cell_ref[len(col_letter):])
@@ -121,22 +128,27 @@ def _write_daily_line(ws, row: int, line: DailyExpenseLine) -> None:
 
 
 def _write_accounts(ws, intake: TravelIntake) -> None:
-    for row, account in zip(range(34, 39), intake.account_codes[:5]):
-        _set(ws, f"G{row}", account.work_order)
-        _set(ws, f"U{row}", account.group)
-        _set(ws, f"AA{row}", account.org_code)
-        _set(ws, f"AJ{row}", account.object_code)
-        _set(ws, f"BH{row}", account.work_op)
-        _set(ws, f"BN{row}", account.bal_sheet)
+    for row, account in zip(range(38, 46), intake.account_codes[:8]):
+        _set(ws, f"A{row}",  account.program)
+        _set(ws, f"I{row}",  account.work_order)
+        _set(ws, f"R{row}",  account.fund)
+        _set(ws, f"X{row}",  account.org_code)    # Dept column
+        _set(ws, f"AD{row}", account.unit)
+        _set(ws, f"AJ{row}", account.subunit)
+        _set(ws, f"AM{row}", account.object_code)
+        _set(ws, f"AS{row}", account.activity)
+        _set(ws, f"BE{row}", account.appropriation)
+        _set(ws, f"BL{row}", account.function)
+        _set(ws, f"BR{row}", account.bal_sheet)
         if account.amount:
-            _set(ws, f"BT{row}", _cv(account.amount))
+            _set(ws, f"BX{row}", _cv(account.amount))
 
 
 def _write_other_expenses(ws, items: List[OtherExpense]) -> None:
-    for row, item in zip(range(34, 40), items[:6]):
-        _set(ws, f"BZ{row}", item.date)
-        _set(ws, f"CF{row}", item.paid_to)
-        _set(ws, f"CY{row}", item.for_what)
+    for row, item in zip(range(38, 46), items[:8]):
+        _set(ws, f"CF{row}", item.date)
+        _set(ws, f"CJ{row}", item.paid_to)
+        _set(ws, f"DA{row}", item.for_what)
         if item.amount:
             _set(ws, f"DS{row}", _cv(item.amount))
 
@@ -167,15 +179,15 @@ def fill_expense_voucher_xlsx(
     _set(ws, "BU7", t.zip_code)
     _set(ws, "CH7", t.official_residence)
 
-    # Last travel date, regular hours, remarks
+    # Last travel date, regular hours, remarks (labels in row 28, values in row 29/31)
     if intake.daily_expenses:
-        _set(ws, "A28", max(x.date for x in intake.daily_expenses))
-    _set(ws, "Z28", t.regular_work_hours)
-    _set(ws, "A30", intake.remarks)
+        _set(ws, "A29", max(x.date for x in intake.daily_expenses))
+    _set(ws, "Z29", t.regular_work_hours)
+    _set(ws, "A31", intake.remarks)
 
     # Daily expense rows
-    first_page_rows  = list(range(10, 22))   # rows 10–21  (12 rows)
-    second_page_rows = list(range(48, 81))   # rows 48–80  (33 rows)
+    first_page_rows  = list(range(10, 23))   # rows 10–22  (13 rows)
+    second_page_rows = list(range(64, 97))   # rows 64–96  (33 rows)
 
     page1_lines = intake.daily_expenses[: len(first_page_rows)]
     page2_lines = intake.daily_expenses[len(first_page_rows) : len(first_page_rows) + len(second_page_rows)]
@@ -185,22 +197,22 @@ def fill_expense_voucher_xlsx(
     for row, line in zip(second_page_rows, page2_lines):
         _write_daily_line(ws, row, line)
 
-    # Travel advance goes into BV27; the template formula CN27=CN25-BV27 computes the net total
+    # Travel advance — BV28; formula CN28=CN26-BV28 computes the net total
     if intake.travel_advance:
-        _set(ws, "BV27", _cv(intake.travel_advance))
+        _set(ws, "BV28", _cv(intake.travel_advance))
 
-    # Account codes and other expense receipts
+    # Account codes and other expense receipts (rows 38-45)
     _write_accounts(ws, intake)
     _write_other_expenses(ws, intake.other_expenses)
 
-    # Page 2 traveler header (repeat)
-    _set(ws, "A45",  t.name_last_first_initial or t.name)
-    _set(ws, "AY45", t.employee_id)
+    # Page 2 traveler header
+    _set(ws, "A53",  t.name_last_first_initial or t.name)
+    _set(ws, "AY53", t.employee_id)
     if intake.daily_expenses:
-        _set(ws, "BU45", max(x.date for x in intake.daily_expenses))
+        _set(ws, "BU53", max(x.date for x in intake.daily_expenses))
 
     # Signature date
-    _set(ws, "AI43", intake.signature_date)
+    _set(ws, "AI50", intake.signature_date)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(output_path))
