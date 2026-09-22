@@ -12,11 +12,10 @@ from typing import Dict, Optional, Tuple
 # ---------------------------------------------------------------------------
 # POV mileage rates (Directive 26A-01, effective 2026-01-01)
 # ---------------------------------------------------------------------------
-POV_FULL_RATE = 0.725       # GC01 – full POV rate (no state vehicle available)
-POV_ELECTIVE_RATE = 0.205   # GC02 – elective POV rate (state vehicle was available)
-# VERIFY each January: motorcycle and aircraft rates
-MOTORCYCLE_RATE = 0.725     # VERIFY – same as POV per 26A-01, confirm with OFM
-AIRCRAFT_RATE = 1.21        # VERIFY – privately owned aircraft, cents/mile
+POV_FULL_RATE = 0.760       # GC01 – full POV rate (no state vehicle available)
+POV_ELECTIVE_RATE = 0.235   # GC02 – elective POV rate (state vehicle was available)
+MOTORCYCLE_RATE = 0.740     # privately owned motorcycle rate
+AIRCRAFT_RATE = 1.935       # privately owned aircraft, per statute mile
 
 # ---------------------------------------------------------------------------
 # In-state meal tiers (OFM FY2026)
