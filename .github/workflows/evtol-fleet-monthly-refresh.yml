@@ -1,11 +1,11 @@
-name: eVTOL fleet monthly refresh
+name: eVTOL fleet scheduled refresh
 
 on:
   schedule:
-    # 1st of every month at 13:00 UTC. The FAA roster changes rarely and OpenSky
-    # flight history only needs to stay roughly current, so monthly is enough —
-    # trigger manually (below) any time you need it sooner.
-    - cron: "0 13 1 * *"
+    # Weekly (Mondays 13:00 UTC). Each flight sync only fetches days not yet
+    # synced, so weekly runs keep requests small and within OpenSky's daily credit
+    # allowance. Trigger manually from the Actions tab any time.
+    - cron: "0 13 * * 1"
   workflow_dispatch: {}
 
 permissions:
@@ -26,19 +26,40 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Refresh FAA registry roster + OpenSky flight history
+      - name: Refresh FAA registry roster
+        id: roster
+        continue-on-error: true
+        run: python scripts/monthly_refresh.py
+
+      # Separate step so a blocked or credit-limited OpenSky never prevents the
+      # roster from being committed. sync_flights.py saves progress per day, so a
+      # partial run is still committed and the next run resumes from there.
+      # NOTE: OpenSky filters many cloud-hosting IP ranges. If this step fails with
+      # "could not be reached", run scripts/sync_flights.py from a home network.
+      - name: Sync OpenSky flight history
+        id: flights
+        continue-on-error: true
         env:
           OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
-        run: python scripts/monthly_refresh.py
+        run: python scripts/sync_flights.py --days 60
 
       - name: Commit changes if any
+        if: always()
         run: |
+          git add -N data/evtol_fleet.db 2>/dev/null || true
           if ! git diff --quiet -- data/tracked_aircraft.json data/evtol_fleet.db; then
             git config user.name "evtol-fleet-tracker-bot"
             git config user.email "actions@users.noreply.github.com"
             git add data/tracked_aircraft.json data/evtol_fleet.db
-            git commit -m "Monthly eVTOL fleet refresh: registry roster + OpenSky flights [skip ci]"
+            git commit -m "Scheduled eVTOL fleet refresh: registry roster + OpenSky flights [skip ci]"
             git pull --rebase origin "$GITHUB_REF_NAME"
             git push origin "HEAD:$GITHUB_REF_NAME"
           fi
+
+      - name: Report step failures
+        if: steps.roster.outcome == 'failure' || steps.flights.outcome == 'failure'
+        run: |
+          echo "Roster step: ${{ steps.roster.outcome }}; flights step: ${{ steps.flights.outcome }}"
+          echo "Anything that did succeed was committed above. See the step logs for the cause."
+          exit 1
