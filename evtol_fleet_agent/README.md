@@ -86,6 +86,33 @@ Use the sidebar to filter by manufacturer or specific N-numbers. The
 dashboard shows total aircraft selected, total flights, total flight hours,
 a per-aircraft table, a flights-per-aircraft chart, and a raw flight log.
 
+The dashboard's sidebar also has a **Refresh FAA + OpenSky data** button that
+runs the same sync in-process (with a progress bar), so you don't have to use
+the CLI at all — this is what makes the app self-contained on Streamlit
+Community Cloud, which doesn't give you a terminal to run scripts.
+
+## Deploying to Streamlit Community Cloud
+
+1. Push this branch (or merge it) so the code is on GitHub.
+2. Go to https://share.streamlit.io → **New app**, pick the `panology` repo
+   and the branch, and set the main file path to `evtol_fleet_agent/app.py`.
+3. In the app's **Settings → Secrets**, add:
+   ```toml
+   OPENSKY_CLIENT_ID = "your-client-id"
+   OPENSKY_CLIENT_SECRET = "your-client-secret"
+   ```
+   (`app.py` reads `st.secrets` first, falling back to environment variables
+   for local runs.)
+4. Deploy, then open the app and click **Refresh FAA + OpenSky data** in the
+   sidebar to populate the cache — it starts empty on every deploy.
+
+**Storage is ephemeral on Community Cloud.** The SQLite cache lives on the
+container's local disk, which is wiped whenever the app restarts — on every
+redeploy, and whenever the app wakes up after going to sleep from
+inactivity. There's no built-in persistence across restarts; you'll need to
+click Refresh again after a restart, or wire the store to external storage
+(e.g. a hosted Postgres/S3 bucket) if you need the cache to survive them.
+
 ## Reliability notes / known limitations
 
 - **Owner-name matching only catches aircraft registered directly under a
