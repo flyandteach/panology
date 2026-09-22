@@ -39,7 +39,271 @@
       "owner_name": "JOBY AERO INC",
       "status_code": "V",
       "year_mfr": "2013"
+    },
+    {
+      "icao24": "a25841",
+      "manufacturer": "BETA",
+      "n_number": "N250HV",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
+      "icao24": "a25952",
+      "manufacturer": "BETA",
+      "n_number": "N250UT",
+      "owner_name": "BETA AIR LLC",
+      "status_code": "V",
+      "year_mfr": "2019"
+    },
+    {
+      "icao24": "a2599d",
+      "manufacturer": "BETA",
+      "n_number": "N250XT",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a25d09",
+      "manufacturer": "BETA",
+      "n_number": "N251UT",
+      "owner_name": "BETA AIR LLC",
+      "status_code": "V",
+      "year_mfr": "2021"
+    },
+    {
+      "icao24": "a3231f",
+      "manufacturer": "Archer",
+      "n_number": "N301AX",
+      "owner_name": "ARCHER AVIATION INC",
+      "status_code": "V",
+      "year_mfr": "2021"
+    },
+    {
+      "icao24": "a326d6",
+      "manufacturer": "Archer",
+      "n_number": "N302AX",
+      "owner_name": "ARCHER AVIATION INC",
+      "status_code": "V",
+      "year_mfr": "2023"
+    },
+    {
+      "icao24": "a31d86",
+      "manufacturer": "Joby",
+      "n_number": "N30FR",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
+      "icao24": "a356aa",
+      "manufacturer": "BETA",
+      "n_number": "N314LC",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
+      "icao24": "a3ad3c",
+      "manufacturer": "BETA",
+      "n_number": "N336MR",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a457c4",
+      "manufacturer": "Archer",
+      "n_number": "N3791Q",
+      "owner_name": "ARCHER AVIATION",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
+      "icao24": "a49ba7",
+      "manufacturer": "Archer",
+      "n_number": "N39610",
+      "owner_name": "ARCHER AVIATION LLC",
+      "status_code": "V",
+      "year_mfr": "1978"
+    },
+    {
+      "icao24": "a4b19c",
+      "manufacturer": "BETA",
+      "n_number": "N401NZ",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a67dd1",
+      "manufacturer": "Archer",
+      "n_number": "N5170J",
+      "owner_name": "ARCHER AVIATION LLC",
+      "status_code": "V",
+      "year_mfr": "2001"
+    },
+    {
+      "icao24": "a6ab72",
+      "manufacturer": "BETA",
+      "n_number": "N529MB",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
+      "icao24": "a6dc6c",
+      "manufacturer": "Joby",
+      "n_number": "N541JA",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2017"
+    },
+    {
+      "icao24": "a6dc81",
+      "manufacturer": "Joby",
+      "n_number": "N541JX",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2024"
+    },
+    {
+      "icao24": "a6e1d6",
+      "manufacturer": "Joby",
+      "n_number": "N5421A",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2022"
+    },
+    {
+      "icao24": "a6df7c",
+      "manufacturer": "Joby",
+      "n_number": "N542BJ",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2021"
+    },
+    {
+      "icao24": "a6e038",
+      "manufacturer": "Joby",
+      "n_number": "N542JX",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2024"
+    },
+    {
+      "icao24": "a6e7a6",
+      "manufacturer": "Joby",
+      "n_number": "N544JX",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2024"
+    },
+    {
+      "icao24": "a6eb5d",
+      "manufacturer": "Joby",
+      "n_number": "N545JX",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a6f2cb",
+      "manufacturer": "Joby",
+      "n_number": "N547JX",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a6fa39",
+      "manufacturer": "Joby",
+      "n_number": "N549JX",
+      "owner_name": "JOBY AERO INC DBA",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
+      "icao24": "a81360",
+      "manufacturer": "Archer",
+      "n_number": "N6196J",
+      "owner_name": "ARCHER AVIATION LLC",
+      "status_code": "V",
+      "year_mfr": "1976"
+    },
+    {
+      "icao24": "a95fc9",
+      "manufacturer": "Archer",
+      "n_number": "N703AX",
+      "owner_name": "ARCHER AVIATION INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a96380",
+      "manufacturer": "Archer",
+      "n_number": "N704AX",
+      "owner_name": "ARCHER AVIATION INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a976d0",
+      "manufacturer": "BETA",
+      "n_number": "N709JL",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": "2026"
+    },
+    {
+      "icao24": "a9e21e",
+      "manufacturer": "Joby",
+      "n_number": "N736JA",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2024"
+    },
+    {
+      "icao24": "a9e5d5",
+      "manufacturer": "Joby",
+      "n_number": "N737JA",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2024"
+    },
+    {
+      "icao24": "ab4cae",
+      "manufacturer": "Joby",
+      "n_number": "N827UR",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2016"
+    },
+    {
+      "icao24": "ab5cf0",
+      "manufacturer": "Joby",
+      "n_number": "N831JY",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
+      "icao24": "ab97ab",
+      "manufacturer": "Archer",
+      "n_number": "N846RS",
+      "owner_name": "ARCHER AVIATION INC",
+      "status_code": "V",
+      "year_mfr": "1990"
+    },
+    {
+      "icao24": "ac3f7a",
+      "manufacturer": "BETA",
+      "n_number": "N889CD",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": "2026"
     }
   ],
-  "generated_at": "2026-09-22T16:19:13.113088+00:00"
+  "generated_at": "2026-09-22T18:49:05.614452+00:00"
 }
