@@ -11,7 +11,9 @@ so a normal residential connection is the most reliable place to run it:
 
 It resumes from where the last run stopped, so running it again after an
 interruption (or after OpenSky credits refill) only fetches what's missing.
-Exit code is 0 on a clean run, 2 if the run stopped early or had errors.
+Exit code is 0 on a clean run or when it paused because OpenSky's daily credits
+ran out (expected during the initial backfill; the next run continues), and 2
+for real problems (OpenSky unreachable, bad credentials, per-aircraft errors).
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from evtol_fleet import config
-from evtol_fleet.opensky import OpenSkyClient
+from evtol_fleet.opensky import OpenSkyClient, OpenSkyCreditsExhausted
 from evtol_fleet.pipeline import SyncReport, refresh_flights, sync_registry_from_snapshot
 from evtol_fleet.store import FleetStore
 
@@ -73,7 +75,11 @@ def main() -> None:
     parser.add_argument("--manufacturer", choices=sorted(config.MANUFACTURER_NAME_PATTERNS))
     args = parser.parse_args()
     report = run(args.days, args.db, args.manufacturer)
-    sys.exit(0 if report.ok else 2)
+    credits_pause = isinstance(report.stop_error, OpenSkyCreditsExhausted) and not report.errors
+    if credits_pause:
+        # GitHub Actions annotation: shows as a yellow note, not a failed run.
+        print("::warning::OpenSky daily credits used up; progress saved, next run continues the backfill.")
+    sys.exit(0 if report.ok or credits_pause else 2)
 
 
 if __name__ == "__main__":

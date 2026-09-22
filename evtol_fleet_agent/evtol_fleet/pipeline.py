@@ -70,6 +70,7 @@ class SyncReport:
     new_flights: dict[str, int] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
     stopped_reason: str | None = None
+    stop_error: Exception | None = None
     synced_through: int | None = None
 
     @property
@@ -113,6 +114,7 @@ def refresh_flights(
         except OpenSkyError as e:
             report.new_flights[n_number] = inserted
             report.stopped_reason = str(e)
+            report.stop_error = e
             logger.error("Stopping flight sync: %s", e)
             break
         except Exception as e:  # one aircraft's bad response shouldn't sink the fleet
