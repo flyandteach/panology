@@ -1,0 +1,45 @@
+{
+  "aircraft": [
+    {
+      "icao24": "a00a8d",
+      "manufacturer": "Joby",
+      "n_number": "N101XW",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "1993"
+    },
+    {
+      "icao24": "a0faad",
+      "manufacturer": "Joby",
+      "n_number": "N162SA",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "1996"
+    },
+    {
+      "icao24": "a1c889",
+      "manufacturer": "BETA",
+      "n_number": "N214BT",
+      "owner_name": "BETA TECHNOLOGIES INC",
+      "status_code": "V",
+      "year_mfr": "2025"
+    },
+    {
+      "icao24": "a1fa3b",
+      "manufacturer": "Archer",
+      "n_number": "N2264M",
+      "owner_name": "ARCHER AVIATION LLC",
+      "status_code": "V",
+      "year_mfr": "1978"
+    },
+    {
+      "icao24": "a1ff5b",
+      "manufacturer": "Joby",
+      "n_number": "N228GM",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": "2013"
+    }
+  ],
+  "generated_at": "2026-09-22T16:19:13.113088+00:00"
+}
