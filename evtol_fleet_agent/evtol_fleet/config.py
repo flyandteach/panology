@@ -16,9 +16,31 @@ OPENSKY_TOKEN_URL = (
 )
 OPENSKY_API_BASE = "https://opensky-network.org/api"
 
-# OpenSky's /flights/aircraft endpoint rejects windows longer than 30 days;
-# stay a day under that to leave margin for clock skew.
-OPENSKY_MAX_WINDOW_SECONDS = 29 * 24 * 3600
+# OpenSky's /flights/aircraft endpoint rejects intervals longer than 2 days
+# ("The given time interval must not be larger than 2 days!", REST API docs).
+# Requests are also billed in credits by the number of UTC calendar days they
+# touch (1-2 days = 30 credits, 3+ days costs far more), so windows are aligned
+# to UTC midnight and never span more than 2 calendar days.
+OPENSKY_MAX_WINDOW_SECONDS = 2 * 24 * 3600
+DAY_SECONDS = 24 * 3600
+
+# /flights/aircraft only returns flights that departed AND arrived inside
+# [begin, end], so a flight straddling a window edge would be lost. Sync in
+# one-UTC-day steps, each request reaching back this far into the previous day.
+# A day plus 3 hours still touches only 2 calendar days (cheapest credit tier),
+# and eVTOL/test flights are far shorter than 3 hours. Duplicates from the
+# overlap are dropped by the flights table's primary key.
+OPENSKY_SYNC_STEP_SECONDS = DAY_SECONDS
+OPENSKY_WINDOW_OVERLAP_SECONDS = 3 * 3600
+
+# OpenSky only publishes /flights data for "the previous day or earlier" (flights
+# are built by a nightly batch job). Never mark anything newer than this many
+# days ago as synced, or flights that land in the batch later are skipped forever.
+OPENSKY_SETTLE_DAYS = 2
+
+# If OpenSky says to wait longer than this after a 429 (credits exhausted),
+# stop the run cleanly and resume next time instead of sleeping for hours.
+OPENSKY_MAX_RETRY_AFTER_SECONDS = 120
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = os.environ.get("EVTOL_DB_PATH", str(PACKAGE_ROOT / "data" / "evtol_fleet.db"))

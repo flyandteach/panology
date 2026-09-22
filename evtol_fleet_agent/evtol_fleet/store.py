@@ -149,6 +149,16 @@ class FleetStore:
         )
         self._conn.commit()
 
+    def sync_state_by_n_number(self) -> dict[str, int]:
+        """N-number -> timestamp through which OpenSky flights have been synced."""
+        cur = self._conn.execute(
+            """
+            SELECT a.n_number, s.synced_through
+            FROM sync_state s JOIN aircraft a ON a.icao24 = s.icao24
+            """
+        )
+        return {row["n_number"]: row["synced_through"] for row in cur.fetchall()}
+
     def flights_for_n_numbers(self, n_numbers: Iterable[str]) -> list[dict]:
         n_numbers = list(n_numbers)
         if not n_numbers:

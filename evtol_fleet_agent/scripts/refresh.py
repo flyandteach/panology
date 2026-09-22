@@ -55,10 +55,15 @@ def main() -> None:
             def progress(done: int, total: int, n_number: str) -> None:
                 print(f"[{done}/{total}] synced flights for {n_number}")
 
-            results = refresh_flights(
+            report = refresh_flights(
                 store, client, begin, end, manufacturer=args.manufacturer, progress_callback=progress
             )
-            print(f"New flight rows inserted: {results}")
+            print(f"New flight rows inserted: {report.new_flights}")
+            for n_number, error in report.errors.items():
+                print(f"  ERROR {n_number}: {error}")
+            if report.stopped_reason:
+                print(f"STOPPED EARLY: {report.stopped_reason}")
+                sys.exit(2)
 
 
 if __name__ == "__main__":

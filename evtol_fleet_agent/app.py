@@ -44,48 +44,68 @@ store = FleetStore(config.DEFAULT_DB_PATH)
 _, registry_generated_at = sync_registry_from_snapshot(store)
 
 
-def sync_flights(progress, start_fraction: float, days_back: int) -> None:
+def sync_flights(progress, days_back: int):
     client_id, client_secret = get_opensky_credentials()
     client = OpenSkyClient(client_id=client_id, client_secret=client_secret)
     if not client.is_authenticated():
         st.warning(
-            "No OpenSky credentials configured — using anonymous access, which is heavily "
-            "rate-limited and may fail. Set OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET in "
-            "the app's Secrets."
+            "No OpenSky credentials configured, so anonymous access is used; it has a small "
+            "credit allowance. Set OPENSKY_CLIENT_ID / OPENSKY_CLIENT_SECRET in the app's Secrets."
         )
-    end = int(datetime.now(tz=timezone.utc).timestamp())
-    begin = end - int(days_back) * 24 * 3600
+    begin = int(datetime.now(tz=timezone.utc).timestamp()) - int(days_back) * 24 * 3600
 
     def on_progress(done: int, total: int, n_number: str) -> None:
-        fraction = start_fraction + (1 - start_fraction) * (done / max(total, 1))
-        progress.progress(min(fraction, 1.0), text=f"Syncing flights: {n_number} ({done}/{total})")
+        progress.progress(min(done / max(total, 1), 1.0), text=f"Syncing flights: {n_number} ({done}/{total})")
 
-    refresh_flights(store, client, begin, end, progress_callback=on_progress)
+    return refresh_flights(store, client, begin, progress_callback=on_progress)
 
+
+def _fmt_day(ts: int | None) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d") if ts else "never"
+
+
+sync_state = store.sync_state_by_n_number()
 
 with st.sidebar:
     st.header("Data")
     st.caption(
         "Aircraft roster last updated: "
-        + (registry_generated_at or "never — the registry snapshot hasn't run yet")
+        + (registry_generated_at or "never (the registry snapshot hasn't run yet)")
     )
+    oldest_sync = min(sync_state.values()) if sync_state else None
     st.caption(
-        "Flight history has a monthly baseline committed by CI (survives app restarts), "
-        "plus anything you sync live below — live syncs are session-only and reset to that "
-        "baseline on the next restart."
+        f"Flight data complete through: **{_fmt_day(oldest_sync)}** (UTC). OpenSky publishes "
+        "flight records once a day, so the most recent 1-2 days are never available yet."
     )
-    days_back = st.number_input(
-        "Days of flight history to sync", min_value=1, max_value=365, value=30, step=1
-    )
-    if st.button("Sync latest OpenSky flights", use_container_width=True):
-        progress = st.progress(0.0, text="Syncing flights...")
-        try:
-            sync_flights(progress, start_fraction=0.0, days_back=days_back)
-            progress.progress(1.0, text="Done.")
-            st.success("Flights synced.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Sync failed: {e}")
+    with st.expander("Sync flights from OpenSky now"):
+        st.caption(
+            "OpenSky blocks many cloud-hosting networks, and connections from this hosted app have "
+            "timed out before, "
+            "so this may fail with a connection message. The reliable path is running "
+            "`scripts/sync_flights.py` from a home network and committing `data/evtol_fleet.db`; "
+            "see the README. Syncs done here reset when the app restarts."
+        )
+        days_back = st.number_input(
+            "Days of history to backfill", min_value=1, max_value=365, value=30, step=1
+        )
+        if st.button("Sync latest OpenSky flights", width="stretch"):
+            progress = st.progress(0.0, text="Syncing flights...")
+            try:
+                report = sync_flights(progress, days_back=days_back)
+            except Exception as e:
+                st.error(f"Sync failed: {e}")
+            else:
+                progress.progress(1.0, text="Done.")
+                total_new = sum(report.new_flights.values())
+                if report.stopped_reason:
+                    st.error(report.stopped_reason)
+                for n_number, error in report.errors.items():
+                    st.warning(f"{n_number}: {error}")
+                if report.ok:
+                    st.success(f"Synced. {total_new} new flights stored.")
+                    st.rerun()
+                elif total_new:
+                    st.info(f"{total_new} new flights were stored before the problem above.")
 
     with st.expander("Advanced: refresh the FAA aircraft roster now"):
         st.caption(
@@ -96,7 +116,7 @@ with st.sidebar:
             "[ReleasableAircraft.zip](https://registry.faa.gov/database/ReleasableAircraft.zip) "
             "yourself from a normal network and upload it instead."
         )
-        if st.button("Try live FAA pull", use_container_width=True):
+        if st.button("Try live FAA pull", width="stretch"):
             progress = st.progress(0.0, text="Refreshing FAA registry...")
             try:
                 registry_counts = refresh_registry(store)
@@ -109,7 +129,7 @@ with st.sidebar:
                 st.error(f"Refresh failed: {e}")
 
         uploaded_zip = st.file_uploader("Or upload ReleasableAircraft.zip", type=["zip"])
-        if uploaded_zip is not None and st.button("Sync from uploaded file", use_container_width=True):
+        if uploaded_zip is not None and st.button("Sync from uploaded file", width="stretch"):
             progress = st.progress(0.0, text="Parsing uploaded registry file...")
             try:
                 registry_counts = refresh_registry_from_zip_bytes(store, uploaded_zip.read())
@@ -168,11 +188,12 @@ summary_df = pd.DataFrame(
             "ICAO24": s.icao24,
             "Total Flights": s.total_flights,
             "Total Flight Hours": s.total_flight_hours,
+            "Synced Through (UTC)": _fmt_day(sync_state.get(s.n_number)),
         }
         for s in summaries
     ]
 ).sort_values("Total Flights", ascending=False)
-st.dataframe(summary_df, use_container_width=True, hide_index=True)
+st.dataframe(summary_df, width="stretch", hide_index=True)
 
 st.subheader("Flights by aircraft")
 st.bar_chart(summary_df.set_index("N-Number")["Total Flights"])
@@ -196,6 +217,6 @@ with st.expander("Flight log"):
         ]
         st.dataframe(
             log_df[display_cols].sort_values("first_seen", ascending=False),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
