@@ -5,7 +5,7 @@ on:
     # Weekly (Mondays 13:00 UTC). Each flight sync only fetches days not yet
     # synced, so weekly runs keep requests small and within OpenSky's daily credit
     # allowance. Trigger manually from the Actions tab any time.
-    - cron: "0 13 * * 1"
+    - cron: "0 13 * * *"
   workflow_dispatch: {}
 
 permissions:
