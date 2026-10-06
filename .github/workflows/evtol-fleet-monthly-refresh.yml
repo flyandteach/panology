@@ -2,10 +2,8 @@ name: eVTOL fleet scheduled refresh
 
 on:
   schedule:
-    # Weekly (Mondays 13:00 UTC). Each flight sync only fetches days not yet
-    # synced, so weekly runs keep requests small and within OpenSky's daily credit
-    # allowance. Trigger manually from the Actions tab any time.
-    - cron: "0 13 * * *"
+    - cron: "0 6 * * *"
+      timezone: America/Los_Angeles
   workflow_dispatch: {}
 
 permissions:
@@ -56,6 +54,13 @@ jobs:
             git pull --rebase origin "$GITHUB_REF_NAME"
             git push origin "HEAD:$GITHUB_REF_NAME"
           fi
+
+      - name: Publish saved flights to the AAM dashboard
+        if: always()
+        env:
+          AAM_SITE_SERVICE_TOKEN: ${{ secrets.AAM_SITE_SERVICE_TOKEN }}
+          AAM_SYNC_KEY: ${{ secrets.AAM_SYNC_KEY }}
+        run: python scripts/publish_to_site.py --db data/evtol_fleet.db --days 30
 
       - name: Report step failures
         if: steps.roster.outcome == 'failure' || steps.flights.outcome == 'failure'
