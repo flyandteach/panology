@@ -217,6 +217,14 @@
       "year_mfr": "2025"
     },
     {
+      "icao24": "a6f682",
+      "manufacturer": "Joby",
+      "n_number": "N548JX",
+      "owner_name": "JOBY AERO INC",
+      "status_code": "V",
+      "year_mfr": ""
+    },
+    {
       "icao24": "a6fa39",
       "manufacturer": "Joby",
       "n_number": "N549JX",
@@ -305,5 +313,5 @@
       "year_mfr": "2026"
     }
   ],
-  "generated_at": "2026-10-06T23:33:31.598715+00:00"
+  "generated_at": "2026-10-07T19:12:53.184595+00:00"
 }
