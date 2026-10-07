@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from sync_to_site import SITE, request_json
 
-def publish(config, db_path, days=30):
+def publish(config, db_path, days=90):
     for key in ("AAM_SITE_SERVICE_TOKEN", "AAM_SYNC_KEY"):
         if not config.get(key):
             raise RuntimeError(f"Required secret is missing: {key}")
@@ -44,7 +44,7 @@ def publish(config, db_path, days=30):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default="evtol_fleet_agent/data/evtol_fleet.db")
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--config-stdin", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.days <= 90:
