@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,8 @@ from evtol_fleet import config
 from evtol_fleet.opensky import OpenSkyClient, OpenSkyCreditsExhausted
 from evtol_fleet.pipeline import SyncReport, refresh_flights, sync_registry_from_snapshot
 from evtol_fleet.store import FleetStore
+from evtol_fleet.faa_registry import RegisteredAircraft
+from sync_to_site import SITE, request_json
 
 
 def _fmt(ts: int | None) -> str:
@@ -38,16 +41,35 @@ def _fmt(ts: int | None) -> str:
 def print_report(report: SyncReport) -> None:
     total = sum(report.new_flights.values())
     print(f"New flights stored: {total} ({report.new_flights})")
-    print(f"Flight data is final through {_fmt(report.synced_through)} UTC (OpenSky publishes daily).")
+    print(f"Historical queries completed through {_fmt(report.synced_through)} UTC; surveillance coverage remains incomplete or unverified.")
     for n_number, error in report.errors.items():
         print(f"  ERROR {n_number}: {error}")
     if report.stopped_reason:
         print(f"STOPPED EARLY: {report.stopped_reason}")
 
 
+def sync_registry_from_dashboard(store):
+    token = os.environ.get("AAM_SITE_SERVICE_TOKEN")
+    if not token:
+        raise RuntimeError("Required secret missing: AAM_SITE_SERVICE_TOKEN")
+    snapshot, _ = request_json(SITE + "/api/sync-fleet", headers={"OAI-Sites-Authorization": "Bearer " + token})
+    roster = snapshot["fleet"]
+    if not roster:
+        raise RuntimeError("Dashboard returned an empty FAA inventory")
+    companies = ("BETA", "Joby", "Archer", "Electra", "Pivotal")
+    if any(a["manufacturer"] not in companies for a in roster):
+        raise RuntimeError("Unknown manufacturer in dashboard inventory")
+    counts = {}
+    for manufacturer in companies:
+        rows = [RegisteredAircraft(n_number=a["registration"], icao24=a["icao24"], manufacturer=manufacturer, owner_name="", year_mfr=a.get("year") or "", status_code=a["statusCode"]) for a in roster if a["manufacturer"] == manufacturer]
+        store.replace_manufacturer_aircraft(manufacturer, rows)
+        counts[manufacturer] = len(rows)
+    return counts, snapshot["registryDate"]
+
+
 def run(days: int, db_path: str, manufacturer: str | None = None) -> SyncReport:
     with FleetStore(db_path) as store:
-        counts, generated_at = sync_registry_from_snapshot(store)
+        counts, generated_at = sync_registry_from_dashboard(store)
         print(f"Roster: {counts} (snapshot {generated_at})")
         client = OpenSkyClient()
         if not client.is_authenticated():
@@ -72,7 +94,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--days", type=int, default=90, help="How far back to backfill (default 90).")
     parser.add_argument("--db", default=config.DEFAULT_DB_PATH)
-    parser.add_argument("--manufacturer", choices=sorted(config.MANUFACTURER_NAME_PATTERNS))
+    parser.add_argument("--manufacturer", choices=["BETA", "Joby", "Archer", "Electra", "Pivotal"])
     args = parser.parse_args()
     report = run(args.days, args.db, args.manufacturer)
     credits_pause = isinstance(report.stop_error, OpenSkyCreditsExhausted) and not report.errors
@@ -84,3 +106,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

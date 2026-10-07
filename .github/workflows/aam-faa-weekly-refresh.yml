@@ -1,0 +1,38 @@
+name: AAM FAA weekly inventory refresh
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+      timezone: America/Los_Angeles
+  workflow_dispatch: {}
+concurrency:
+  group: aam-fleet-collector
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  refresh-faa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: evtol_fleet_agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download FAA inventory and publish to dashboard
+        env:
+          AAM_SITE_SERVICE_TOKEN: ${{ secrets.AAM_SITE_SERVICE_TOKEN }}
+          AAM_SYNC_KEY: ${{ secrets.AAM_SYNC_KEY }}
+        run: python scripts/publish_faa.py
+      - name: Save verified FAA snapshot
+        run: |
+          git add data/aam_registry_snapshot.json
+          if ! git diff --cached --quiet; then
+            git config user.name "aam-fleet-tracker-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git commit -m "Weekly FAA inventory refresh [skip ci]"
+            git pull --rebase origin "$GITHUB_REF_NAME"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
