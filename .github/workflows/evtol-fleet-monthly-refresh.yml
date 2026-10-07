@@ -6,12 +6,17 @@ on:
       timezone: America/Los_Angeles
   workflow_dispatch: {}
 
+concurrency:
+  group: aam-fleet-collector
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: evtol_fleet_agent
@@ -22,7 +27,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install -r requirements.txt
+      - run: pip install requests
 
       - name: Refresh FAA registry roster
         id: roster
@@ -60,7 +65,7 @@ jobs:
         env:
           AAM_SITE_SERVICE_TOKEN: ${{ secrets.AAM_SITE_SERVICE_TOKEN }}
           AAM_SYNC_KEY: ${{ secrets.AAM_SYNC_KEY }}
-        run: python scripts/publish_to_site.py --db data/evtol_fleet.db --days 30
+        run: python scripts/publish_to_site.py --db data/evtol_fleet.db --days 90
 
       - name: Report step failures
         if: steps.roster.outcome == 'failure' || steps.flights.outcome == 'failure'
@@ -68,3 +73,4 @@ jobs:
           echo "Roster step: ${{ steps.roster.outcome }}; flights step: ${{ steps.flights.outcome }}"
           echo "Anything that did succeed was committed above. See the step logs for the cause."
           exit 1
+
