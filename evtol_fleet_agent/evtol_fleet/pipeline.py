@@ -87,7 +87,7 @@ def refresh_flights(
     progress_callback: ProgressCallback | None = None,
     pause_between_requests: float = 1.0,
 ) -> SyncReport:
-    """Fetch new OpenSky flight history for cached aircraft.
+    """Fetch recent fleet activity first, then fairly backfill historical gaps.
 
     Resumes from each aircraft's saved watermark, saves progress after every
     day-window so an interrupted run loses nothing, never syncs past the settled
@@ -98,29 +98,71 @@ def refresh_flights(
     settled = settled_sync_end()
     end = settled if end is None else min(end, settled)
     begin = begin // config.DAY_SECONDS * config.DAY_SECONDS
-    report = SyncReport(synced_through=end)
+    report = SyncReport()
     aircraft_rows = store.list_aircraft(manufacturer)
+    if not aircraft_rows or begin >= end:
+        return report
+    # Rotate first aircraft daily so a quota smaller than one fleet sweep cannot
+    # indefinitely starve aircraft at the end of the roster.
+    rotation = (end // config.DAY_SECONDS) % len(aircraft_rows)
+    aircraft_rows = aircraft_rows[rotation:] + aircraft_rows[:rotation]
+    recent_begin = max(begin, end - 2 * config.DAY_SECONDS)
+    failed = set()
+
+    def stop(error):
+        report.stopped_reason = str(error)
+        report.stop_error = error
+        logger.error("Stopping flight sync: %s", error)
+
+    # Spend the first requests on recent activity across the fleet. Do not move
+    # a historical watermark over unqueried gaps merely because recent records
+    # were received. The following backfill pass closes those gaps separately.
     for index, aircraft in enumerate(aircraft_rows):
         icao24, n_number = aircraft["icao24"], aircraft["n_number"]
-        window_begin = max(begin, store.get_sync_state(icao24) or begin)
-        inserted = 0
+        report.new_flights[n_number] = 0
         try:
-            if window_begin < end:
-                for synced_through, flights in client.iter_flight_windows(
-                    icao24, window_begin, end, pause_between_requests
-                ):
-                    inserted += store.insert_flights(flights)
-                    store.set_sync_state(icao24, synced_through)
-        except OpenSkyError as e:
-            report.new_flights[n_number] = inserted
-            report.stopped_reason = str(e)
-            report.stop_error = e
-            logger.error("Stopping flight sync: %s", e)
+            flights = client.get_flights_for_aircraft(icao24, recent_begin, end)
+            report.new_flights[n_number] += store.insert_flights(flights)
+            watermark = store.get_sync_state(icao24)
+            if (watermark is not None and watermark >= recent_begin) or begin == recent_begin:
+                store.set_sync_state(icao24, end)
+            if pause_between_requests:
+                time.sleep(pause_between_requests)
+        except OpenSkyError as error:
+            stop(error)
             break
-        except Exception as e:  # one aircraft's bad response shouldn't sink the fleet
-            report.errors[n_number] = f"{type(e).__name__}: {e}"
-            logger.exception("Flight sync failed for %s", n_number)
-        report.new_flights[n_number] = inserted
+        except Exception as error:
+            failed.add(icao24)
+            report.errors[n_number] = f"{type(error).__name__}: {error}"
         if progress_callback:
             progress_callback(index + 1, len(aircraft_rows), n_number)
+
+    # Backfill one day per aircraft per pass, preserving progress after each
+    # successful request instead of consuming all credits on the first aircraft.
+    while report.stop_error is None:
+        progressed = False
+        for aircraft in aircraft_rows:
+            icao24, n_number = aircraft["icao24"], aircraft["n_number"]
+            if icao24 in failed:
+                continue
+            cursor = max(begin, store.get_sync_state(icao24) or begin)
+            if cursor >= end:
+                continue
+            try:
+                for synced_through, flights in client.iter_flight_windows(
+                    icao24, cursor, min(cursor + config.DAY_SECONDS, end), pause_between_requests
+                ):
+                    report.new_flights[n_number] += store.insert_flights(flights)
+                    store.set_sync_state(icao24, synced_through)
+                    progressed = True
+            except OpenSkyError as error:
+                stop(error)
+                break
+            except Exception as error:
+                failed.add(icao24)
+                report.errors[n_number] = f"{type(error).__name__}: {error}"
+        if not progressed:
+            break
+    watermarks = [store.get_sync_state(a["icao24"]) for a in aircraft_rows]
+    report.synced_through = min(watermarks) if all(w is not None for w in watermarks) else None
     return report
