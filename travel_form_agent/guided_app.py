@@ -62,7 +62,7 @@ if "_profile_loaded" not in st.session_state:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_guided, tab_json = st.tabs(["Guided Form", "JSON Upload"])
+tab_guided, tab_import, tab_json = st.tabs(["Guided Form", "Import Documents", "JSON Upload"])
 
 # ===========================================================================
 # GUIDED FORM TAB
@@ -706,6 +706,139 @@ with tab_guided:
                 except Exception as e:
                     st.error(str(e))
                     raise
+
+# ===========================================================================
+# IMPORT DOCUMENTS TAB
+# ===========================================================================
+with tab_import:
+    st.subheader("Import Documents")
+    st.write(
+        "Upload your **approved travel request** and any receipts. "
+        "Claude will read the documents and pre-fill the expense voucher for you."
+    )
+    st.info(
+        "Accepted formats: PDF, JPG, PNG. "
+        "The travel request PDF is required; receipts are optional."
+    )
+
+    imp_travel_req = st.file_uploader(
+        "Approved Travel Request PDF (required)",
+        type=["pdf"],
+        key="imp_travel_req",
+    )
+    imp_hotel = st.file_uploader(
+        "Hotel folio / receipt (optional)",
+        type=["pdf", "jpg", "jpeg", "png"],
+        key="imp_hotel",
+    )
+    imp_other_receipts = st.file_uploader(
+        "Other receipts – parking, airfare, registration, etc. (optional, multi-select)",
+        type=["pdf", "jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="imp_other",
+    )
+
+    if st.button("Extract from documents", type="primary", key="imp_extract"):
+        if imp_travel_req is None:
+            st.error("Upload the approved travel request PDF first.")
+        else:
+            try:
+                from travel_agent.extract import (
+                    extract_hotel_folio,
+                    extract_receipt,
+                    extract_travel_request,
+                    merge_into_intake,
+                )
+
+                with st.spinner("Reading travel request…"):
+                    tr_data = extract_travel_request(
+                        imp_travel_req.getvalue(), imp_travel_req.name
+                    )
+
+                hotel_data = None
+                if imp_hotel is not None:
+                    with st.spinner("Reading hotel folio…"):
+                        hotel_data = extract_hotel_folio(
+                            imp_hotel.getvalue(), imp_hotel.name
+                        )
+
+                receipts = []
+                for r_file in (imp_other_receipts or []):
+                    with st.spinner(f"Reading {r_file.name}…"):
+                        receipts.append(
+                            extract_receipt(r_file.getvalue(), r_file.name)
+                        )
+
+                merged = merge_into_intake(tr_data, hotel_data, receipts)
+                st.session_state["imp_payload"] = merged
+                st.success("Extraction complete. Review the data below, then generate.")
+
+            except Exception as e:
+                st.error(f"Extraction failed: {e}")
+                raise
+
+    if "imp_payload" in st.session_state:
+        payload_imp = st.session_state["imp_payload"]
+
+        with st.expander("Review extracted data", expanded=True):
+            st.json(payload_imp)
+            st.caption(
+                "If anything looks wrong, edit the JSON directly below and click Update."
+            )
+            edited_json = st.text_area(
+                "Edit JSON (optional)",
+                value=json.dumps(payload_imp, indent=2, default=str),
+                height=320,
+                key="imp_edit_json",
+            )
+            if st.button("Update from edited JSON", key="imp_update"):
+                try:
+                    st.session_state["imp_payload"] = json.loads(edited_json)
+                    st.success("Updated.")
+                    st.rerun()
+                except json.JSONDecodeError as exc:
+                    st.error(f"Invalid JSON: {exc}")
+
+        if st.button("Generate expense voucher", type="primary", key="imp_gen"):
+            try:
+                final_payload = st.session_state["imp_payload"]
+                intake = TravelIntake.from_dict(final_payload)
+                with tempfile.TemporaryDirectory() as td:
+                    td_path = Path(td)
+                    req_tpl = td_path / "travel_request_template.pdf"
+                    exp_tpl = td_path / "133-103_template.xlsx"
+                    req_tpl.write_bytes(
+                        (BASE / "templates" / "travel_request_template.pdf").read_bytes()
+                    )
+                    exp_tpl.write_bytes(
+                        (BASE / "templates" / "133-103_template.xlsx").read_bytes()
+                    )
+                    agent = TravelFormAgent(req_tpl, exp_tpl, td_path / "outputs")
+                    outputs = agent.run(intake)
+                    pdf_bytes = outputs["travel_request_pdf"].read_bytes()
+                    xlsx_bytes = outputs["expense_voucher_xlsx"].read_bytes()
+
+                title = final_payload.get("event_title", "expense")
+                safe = "".join(c if c.isalnum() else "_" for c in title)[:40]
+                st.success(f"Forms generated for **{title}**.")
+                dl1, dl2 = st.columns(2)
+                dl1.download_button(
+                    "Download Travel Request PDF",
+                    pdf_bytes,
+                    f"travel_request_{safe}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+                dl2.download_button(
+                    "Download Expense Voucher XLSX",
+                    xlsx_bytes,
+                    f"expense_voucher_{safe}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.error(str(e))
+                raise
 
 # ===========================================================================
 # JSON UPLOAD TAB
