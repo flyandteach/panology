@@ -459,27 +459,42 @@ with tab_guided:
     # Section 6 – Charge codes
     # -----------------------------------------------------------------------
     with st.expander("Section 6 – Charge codes", expanded=True):
-        st.caption("Object code column is filled automatically. Enter your work order and org code.")
+        st.caption("Object code is filled automatically. Enter your org's charge code fields (saved to your profile).")
         acc1, acc2, acc3 = st.columns(3)
-        acc1.text_input("Work order", key="p_work_order")
-        acc2.text_input("Group", key="p_group_code", placeholder="02")
-        acc3.text_input("Work op", key="p_work_op", placeholder="0605")
-        st.text_input("Org code", key="p_org_code", placeholder="691010")
+        acc1.text_input("Program", key="p_program", placeholder="AVOPS")
+        acc2.text_input("Task Order", key="p_work_order", placeholder="")
+        acc3.text_input("Fund", key="p_fund", placeholder="039")
+        acc4, acc5, acc6 = st.columns(3)
+        acc4.text_input("Dept", key="p_org_code", placeholder="405")
+        acc5.text_input("Unit", key="p_unit", placeholder="6910")
+        acc6.text_input("Sub Unit", key="p_subunit", placeholder="10")
+        acc7, acc8, acc9 = st.columns(3)
+        acc7.text_input("Activity", key="p_activity", placeholder="F501")
+        acc8.text_input("Appr Unit", key="p_appr_unit", placeholder="310")
+        acc9.text_input("Function", key="p_function", placeholder="0605")
+        st.text_input("Bal Sheet", key="p_bal_sheet", placeholder="(leave blank if not required)")
         travel_advance = st.number_input("Travel advance received ($)", min_value=0.0, step=1.0)
         remarks = st.text_area("Remarks (expense voucher)",
                                placeholder="Registration and mileage entered from approved travel request.")
         comments = st.text_area("Comments (travel request – transport / hotel details)",
-                                placeholder="Drive personal vehicle to avoid delays. Home to/from HQ at GC01 (XX mi × $0.725 = $XX).")
+                                placeholder="Drive personal vehicle to avoid delays. Home to/from HQ at GC01 (XX mi × $0.760 = $XX).")
 
     # -----------------------------------------------------------------------
     # Build payload
     # -----------------------------------------------------------------------
     def build_payload():
-        work_order = st.session_state["p_work_order"]
-        group_code = st.session_state["p_group_code"]
-        work_op = st.session_state["p_work_op"]
-        org_code = st.session_state["p_org_code"]
-        base_acct = {"work_order": work_order, "group": group_code, "work_op": work_op, "org_code": org_code}
+        base_acct = {
+            "program":       st.session_state.get("p_program", ""),
+            "work_order":    st.session_state.get("p_work_order", ""),
+            "fund":          st.session_state.get("p_fund", ""),
+            "org_code":      st.session_state.get("p_org_code", ""),
+            "unit":          st.session_state.get("p_unit", ""),
+            "subunit":       st.session_state.get("p_subunit", ""),
+            "activity":      st.session_state.get("p_activity", ""),
+            "appropriation": st.session_state.get("p_appr_unit", ""),
+            "function":      st.session_state.get("p_function", ""),
+            "bal_sheet":     st.session_state.get("p_bal_sheet", ""),
+        }
 
         # Build per-day expense lines
         daily_expenses = []

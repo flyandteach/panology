@@ -14,7 +14,8 @@ PROFILE_KEYS = [
     "p_official_station", "p_official_residence",
     "p_address", "p_city", "p_state", "p_zip",
     "p_supervisor", "p_approver",
-    "p_work_order", "p_group_code", "p_work_op", "p_org_code",
+    "p_program", "p_work_order", "p_fund", "p_org_code",
+    "p_unit", "p_subunit", "p_activity", "p_appr_unit", "p_function", "p_bal_sheet",
 ]
 
 # Maps session-state key → JSON file key
