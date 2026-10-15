@@ -19,7 +19,7 @@ MOTORCYCLE_RATE = 0.740     # privately owned motorcycle rate
 AIRCRAFT_RATE = 1.935       # privately owned aircraft, per statute mile
 
 # ---------------------------------------------------------------------------
-# In-state meal tiers (OFM FY2026)
+# In-state meal tiers (OFM FY2027)
 # Splits: B=breakfast, L=lunch, D=dinner
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
