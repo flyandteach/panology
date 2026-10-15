@@ -12,13 +12,23 @@ from .models import DailyExpenseLine, OtherExpense, TravelIntake
 
 
 # ---------------------------------------------------------------------------
-# Actual 133-103 template column layout (verified from 133-103_template.xlsx):
+# Actual 133-103 template column layout (verified from the BLANK template,
+# DOT Form 133-103 Revised 4/2026, via merged-cell map):
 #
-# Header rows 4-7:
-#   Row 4 labels: A4=Name, AY4=Employee ID, CH4=Official Station
-#   Row 5 data:   A5=name, AY5=emp_id, CH5=official_station
-#   Row 6 labels: A6=Address, AY6=City, BP6=State, BU6=Zip, CH6=Official Residence
-#   Row 7 data:   A7=address, AY7=city, BP7=state, BU7=zip, CH7=official_residence
+# Row 33 = account-coding headers:
+#   A33=Program, G33=Task Order, O33=Fund, U33=Dept, AA33=Unit,
+#   AG33=Sub Unit, AJ33=Object, AP33=Activity, AV33=Location,
+#   BB33=Appr Unit, BH33=Function, BN33=Bal Sheet, BT33=Amount,
+#   BZ33=Date, CF33=Paid To, CY33=For What, DS33=Amount  (receipts block)
+#
+# Account-code data rows: 34-38 (5 rows max). Rows 39+ are merged section
+# areas (Travel Advance / Totals / certifications) — NOT account rows.
+#   A=program, G=task_order/work_order, O=fund, U=dept/org_code,
+#   AA=unit, AG=subunit, AJ=object_code, AP=activity,
+#   BB=appr_unit/appropriation, BH=function, BN=bal_sheet, BT=amount
+#
+# Receipts ("Detail of Other Expense") data rows: 34-39 (6 rows max):
+#   BZ=date, CF=paid_to, CY=for_what, DS=amount
 #
 # Expense rows 10-21 (page 1, 12 rows), 48-80 (page 2, 33 rows):
 #   A=date, G=day, J=from, X=to, AL=depart, AR=return,
@@ -36,16 +46,6 @@ from .models import DailyExpenseLine, OtherExpense, TravelIntake
 #   A29=label "Remarks", A30=remarks value
 #   BK27=label "Less Travel Advance:", BV27=travel_advance value
 #   CN27=formula(CN25-BV27)
-#
-# Account codes rows 34-38 (left columns):
-#   A=program, G=task_order/work_order, O=fund, U=dept/org_code,
-#   AA=unit, AG=subunit, AJ=object_code, AP=activity,
-#   AV=location, BB=appr_unit/appropriation, BH=function, BN=bal_sheet, BT=amount
-#
-# Other expenses rows 34-38 (right columns):
-#   BZ=date, CF=paid_to, CY=for_what, DS=amount
-#
-# Row 39: Travel Advance label; Row 40: Totals (formulas)
 #
 # Signature block (rows 41-43): hand-signed; no digital date cell available.
 # Page 2 header:
@@ -148,7 +148,7 @@ def _write_accounts(ws, intake: TravelIntake) -> None:
 
 
 def _write_other_expenses(ws, items: List[OtherExpense]) -> None:
-    for row, item in zip(range(34, 39), items[:5]):
+    for row, item in zip(range(34, 40), items[:6]):
         _set(ws, f"BZ{row}", item.date)
         _set(ws, f"CF{row}", item.paid_to)
         _set(ws, f"CY{row}", item.for_what)
