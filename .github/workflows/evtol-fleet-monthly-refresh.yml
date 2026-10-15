@@ -2,11 +2,13 @@ name: eVTOL fleet scheduled refresh
 
 on:
   schedule:
-    # Weekly (Mondays 13:00 UTC). Each flight sync only fetches days not yet
-    # synced, so weekly runs keep requests small and within OpenSky's daily credit
-    # allowance. Trigger manually from the Actions tab any time.
-    - cron: "0 13 * * 1"
+    - cron: "0 6 * * *"
+      timezone: America/Los_Angeles
   workflow_dispatch: {}
+
+concurrency:
+  group: aam-fleet-collector
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -14,6 +16,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: evtol_fleet_agent
@@ -24,25 +27,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install -r requirements.txt
+      - run: pip install requests
 
-      - name: Refresh FAA registry roster
-        id: roster
-        continue-on-error: true
-        run: python scripts/monthly_refresh.py
-
-      # Separate step so a blocked or credit-limited OpenSky never prevents the
-      # roster from being committed. sync_flights.py saves progress per day, so a
-      # partial run is still committed and the next run resumes from there.
-      # NOTE: OpenSky filters many cloud-hosting IP ranges. If this step fails with
-      # "could not be reached", run scripts/sync_flights.py from a home network.
+      # Read the dashboard's weekly FAA inventory; collection does not download
+      # the registry or consume OpenSky credits on page load.
       - name: Sync OpenSky flight history
         id: flights
         continue-on-error: true
         env:
+          AAM_SITE_SERVICE_TOKEN: ${{ secrets.AAM_SITE_SERVICE_TOKEN }}
           OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
-        run: python scripts/sync_flights.py --days 60
+        run: python scripts/sync_flights.py --days 90
 
       - name: Commit changes if any
         if: always()
@@ -57,9 +53,17 @@ jobs:
             git push origin "HEAD:$GITHUB_REF_NAME"
           fi
 
+      - name: Publish saved flights to the AAM dashboard
+        if: always()
+        env:
+          AAM_SITE_SERVICE_TOKEN: ${{ secrets.AAM_SITE_SERVICE_TOKEN }}
+          AAM_SYNC_KEY: ${{ secrets.AAM_SYNC_KEY }}
+        run: python scripts/publish_to_site.py --db data/evtol_fleet.db --days 90
+
       - name: Report step failures
-        if: steps.roster.outcome == 'failure' || steps.flights.outcome == 'failure'
+        if: steps.flights.outcome == 'failure'
         run: |
-          echo "Roster step: ${{ steps.roster.outcome }}; flights step: ${{ steps.flights.outcome }}"
+          echo "Flights step: ${{ steps.flights.outcome }}"
           echo "Anything that did succeed was committed above. See the step logs for the cause."
           exit 1
+
