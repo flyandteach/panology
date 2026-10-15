@@ -20,6 +20,20 @@ class TravelFormAgent:
         if missing:
             raise ValueError("Missing required travel intake fields: " + ", ".join(missing))
 
+        warnings: list[str] = []
+        # The 133-103 account-coding block fits 5 lines (rows 34-38) and the
+        # receipts block fits 6 lines (rows 34-39). Extra lines are dropped.
+        if len(intake.account_codes) > 5:
+            warnings.append(
+                f"Only the first 5 of {len(intake.account_codes)} account-code lines fit "
+                "on the 133-103 voucher; the rest were omitted."
+            )
+        if len(intake.other_expenses) > 6:
+            warnings.append(
+                f"Only the first 6 of {len(intake.other_expenses)} receipt lines fit "
+                "on the 133-103 voucher; the rest were omitted."
+            )
+
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in intake.event_title)[:60].strip("_")
         if not safe_name:
             safe_name = "travel"
@@ -29,4 +43,10 @@ class TravelFormAgent:
 
         fill_travel_request_pdf(intake, self.travel_request_template, request_path)
         fill_expense_voucher_xlsx(intake, self.expense_voucher_template, expense_path)
-        return {"travel_request_pdf": request_path, "expense_voucher_xlsx": expense_path}
+        result: Dict[str, Path] = {
+            "travel_request_pdf": request_path,
+            "expense_voucher_xlsx": expense_path,
+        }
+        if warnings:
+            result["warnings"] = warnings  # type: ignore[assignment]
+        return result
