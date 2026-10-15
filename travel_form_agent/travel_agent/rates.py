@@ -1,7 +1,8 @@
 """WSDOT/OFM travel rates and object code rules.
 
-Rates verified against OFM Directive 26A-01 (effective 2026-01-01).
-Update the RATES block each January when OFM publishes the new directive.
+Meal tiers and per-meal amounts verified against OFM FY2027 color map
+(effective 2026-10-01).  POV mileage rate ($0.760) confirmed same.
+Update each October when OFM publishes the new per diem color map.
 """
 
 from __future__ import annotations
@@ -30,9 +31,9 @@ class MealTier:
 
 
 MEAL_TIERS: Dict[int, MealTier] = {
-    68: MealTier(68.0, 14.00, 19.00, 35.00),
-    80: MealTier(80.0, 17.00, 22.00, 41.00),
-    86: MealTier(86.0, 20.00, 24.00, 42.00),
+    68: MealTier(68.0, 17.00, 20.00, 31.00),
+    80: MealTier(80.0, 20.00, 24.00, 36.00),
+    86: MealTier(86.0, 22.00, 25.00, 39.00),
     92: MealTier(92.0, 24.00, 27.00, 41.00),
 }
 
