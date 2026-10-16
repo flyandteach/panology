@@ -862,10 +862,6 @@ with tab_import:
         if st.button("Generate expense voucher", type="primary", key="imp_gen"):
             try:
                 from travel_agent.extract import merge_receipts
-                from travel_agent.rates import (
-                    mileage_object_code, other_travel_object_code,
-                    registration_object_code, subsistence_object_code,
-                )
 
                 base_acct = {
                     "program":       imp_program,
@@ -880,21 +876,53 @@ with tab_import:
                     "bal_sheet":     imp_acc.get("bal_sheet", ss.get("p_bal_sheet", "")),
                 }
 
-                # Build account_codes from receipt rows
-                account_codes = []
+                # Aggregate expense totals by object code category.
+                # GA01 = in-state subsistence + lodging (Chart of Accounts: "In-State Subsistence and Lodging")
+                # EG01 = conference/training registration fees
+                # GB01 = in-state air transportation
+                # GC01 = privately owned vehicle mileage
+                # GD01 = in-state other travel expenses (parking, taxi, shuttle, etc.)
+                reg_total      = float(payload_imp.get("registration_fee") or 0)
+                airfare_total  = float(payload_imp.get("airfare") or 0)
+                sub_days  = int(payload_imp.get("subsistence_days") or 0)
+                sub_rate  = float(payload_imp.get("subsistence_rate") or 0)
+                lodg_days = int(payload_imp.get("lodging_days") or 0)
+                lodg_rate = float(payload_imp.get("lodging_rate") or 0)
+                ga01_total = sub_days * sub_rate + lodg_days * lodg_rate
+                gc01_total = 0.0
+                gd01_total = 0.0
+
                 other_expenses = []
                 for row in receipt_rows:
                     exp_type = row.pop("_type", "other")
+                    amt = float(row.get("amount") or 0)
                     if exp_type == "registration":
-                        obj = registration_object_code("conference")
-                    elif exp_type in ("lodging",):
-                        obj = "GA01"
+                        reg_total += amt
+                    elif exp_type in ("lodging", "subsistence", "meals"):
+                        ga01_total += amt
                     elif exp_type == "airfare":
-                        obj = "GB01"
-                    else:
-                        obj = other_travel_object_code(exp_type)
-                    account_codes.append({**base_acct, "object_code": obj, "amount": row["amount"]})
+                        airfare_total += amt
+                    elif exp_type == "mileage":
+                        gc01_total += amt
+                    else:  # parking, taxi, rideshare, ferry, toll, bus, rail, other
+                        gd01_total += amt
                     other_expenses.append(row)
+
+                # One account_code row per object code with a non-zero total,
+                # in the order they appear on the standard charge code table.
+                account_codes = []
+                if reg_total:
+                    account_codes.append({**base_acct, "object_code": "EG01", "amount": reg_total})
+                if ga01_total:
+                    account_codes.append({**base_acct, "object_code": "GA01", "amount": ga01_total})
+                if airfare_total:
+                    account_codes.append({**base_acct, "object_code": "GB01", "amount": airfare_total})
+                if gc01_total:
+                    account_codes.append({**base_acct, "object_code": "GC01", "amount": gc01_total})
+                if gd01_total:
+                    account_codes.append({**base_acct, "object_code": "GD01", "amount": gd01_total})
+                if not account_codes:
+                    account_codes.append({**base_acct, "object_code": "GA01", "amount": 0.0})
 
                 final_payload = {
                     **payload_imp,

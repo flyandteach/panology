@@ -139,53 +139,71 @@ def _dollar(label: str, text: str) -> float:
 
 def _parse_charge_codes(text: str) -> list[dict]:
     """
-    Parse the charge code table from the Form 700-006 text.
-    The form has a coding section with fields like:
-      Task Order / Work Order, Fund, Org Code, Object Code, Activity, etc.
-    Returns a list of account_code dicts (usually 1–3 rows).
+    Parse the charge code table from the Form 700-006 (WSDOT).
+
+    Form 700-006 column headers (Chart of Accounts M 13-02):
+      Program | Task Order | Fund | Dept | Unit | Sub Unit |
+      Object | Activity | Location | Appr Unit | Function | Bal Sheet
+
+    Object codes are NOT extracted here — they are auto-assigned per
+    expense type when building the expense voucher.  We extract the
+    base fields that are constant across all charge code rows.
     """
-    codes = []
+    # Narrow to the Charge Codes section if possible
+    m = re.search(r"Charge\s*Codes?(.*)", text, re.I | re.S)
+    section = m.group(1)[:800] if m else text
 
-    # Look for blocks with task order + object code patterns
-    # Common pattern: "AD0632  039  691010  EG02  ..."
-    # Also: labeled rows like "Task Order: AD0632  Fund: 039  ..."
+    # --- helpers to pull the first non-header token after a label ---
+    def _val(label: str, src: str, width: int = 20) -> str:
+        mv = re.search(label + r"[:\s]+([A-Za-z0-9]+)", src, re.I)
+        return mv.group(1).strip() if mv else ""
 
-    # Try labeled format first
-    work_order  = _after(r"Task\s*Order|Work\s*Order",  text, 20)
-    fund        = _after(r"\bFund\b",                   text, 15)
-    org_code    = _after(r"Org(?:\s*Code)?",            text, 15)
-    object_code = _after(r"Object\s*Code|Obj\.?\s*Code|Object", text, 10)
-    activity    = _after(r"\bActivity\b",               text, 15)
-    program     = _after(r"\bProgram\b",                text, 15)
-    unit        = _after(r"\bUnit\b",                   text, 15)
-    subunit     = _after(r"Sub\s*[Uu]nit",              text, 15)
-    appr        = _after(r"Appr(?:opriation)?\s*(?:Unit)?", text, 15)
-    function    = _after(r"\bFunction\b",               text, 15)
+    # Program (e.g. AVOPS)
+    program = _val(r"Program", section) or _after(r"Program", text, 15)
 
-    if work_order or object_code or org_code:
-        codes.append({
+    # Task Order / Work Order — often blank for conference travel
+    work_order = _val(r"Task\s*Order|Work\s*Order", section) or _after(r"Task\s*Order|Work\s*Order", text, 20)
+
+    # Fund (3-digit, e.g. 039)
+    fund = _val(r"\bFund\b", section) or _after(r"\bFund\b", text, 10)
+
+    # Dept (column U in 133-103 XLSX, maps to org_code field, e.g. 405)
+    dept = _val(r"\bDept\b", section) or _after(r"\bDept\b", text, 10)
+
+    # Unit (column AA in XLSX, e.g. 6910)
+    unit = _val(r"\bUnit\b(?!\s*[Ss]ub|\s*[Aa]ppr)", section) or ""
+    if not unit:
+        # fallback: look for 4-digit number after Fund/Dept but before Object code
+        mu = re.search(r"\b(\d{4})\b", section[section.find(fund or ""):] if fund else section)
+        unit = mu.group(1) if mu else ""
+
+    # Sub Unit (e.g. 10)
+    subunit = _val(r"Sub\s*[Uu]nit", section) or _after(r"Sub\s*[Uu]nit", text, 10)
+
+    # Activity (e.g. F501)
+    activity = _val(r"\bActivity\b", section) or _after(r"\bActivity\b", text, 15)
+
+    # Appr Unit / Appropriation (e.g. 310)
+    appr = _val(r"Appr(?:opriation)?\s*(?:Unit)?", section) or _after(r"Appr(?:opriation)?\s*(?:Unit)?", text, 15)
+
+    # Function (e.g. 0605)
+    function = _val(r"\bFunction\b", section) or _after(r"\bFunction\b", text, 10)
+
+    if any([program, fund, dept, unit, activity]):
+        return [{
             "program":       program,
             "work_order":    work_order,
             "fund":          fund,
-            "org_code":      org_code,
+            "org_code":      dept,   # Dept column → org_code field → XLSX column U
             "unit":          unit,
             "subunit":       subunit,
-            "object_code":   object_code,
+            "object_code":   "",     # assigned per expense type at voucher-build time
             "activity":      activity,
             "appropriation": appr,
             "function":      function,
-        })
-
-    # Also try to find multiple charge code rows — look for lines that look like
-    # "AD0632  039  691010  EG02  ..." (alphanumeric codes separated by spaces)
-    # Object codes follow pattern like GA01, GC01, EG02, etc.
-    obj_code_pattern = r'\b([A-Z]{2}\d{2,3})\b'
-    rows = re.findall(
-        r'(?:AD|GC|GA|GB|GD|GF|GG|GN|EG)\w+.*?(?:\d{4,6})',
-        text, re.I
-    )
-
-    return codes
+            "bal_sheet":     "",
+        }]
+    return []
 
 
 def _parse_150_rule(text: str) -> dict:
