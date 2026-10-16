@@ -1,18 +1,23 @@
 """Extract structured travel data from a filled WSDOT travel request PDF.
 
-Uses pypdf to read AcroForm field values from a filled Form 700-006.
+Strategy:
+1. Try pypdf AcroForm field extraction (works for digitally filled PDFs).
+2. Fall back to text extraction + regex parsing (works for printed/scanned PDFs).
 No external API required.
 """
 
 from __future__ import annotations
 
+import io
 import re
 from pathlib import Path
 from typing import Optional
 
 
 # ---------------------------------------------------------------------------
-# Field name → intake key mapping (verified from fill_pdf.py / Form 700-006)
+# AcroForm field name → intake key mapping.
+# These names were verified from fill_pdf.py (Form 700-006 / travel_request_template.pdf).
+# pypdf.get_fields() returns them as dict keys on a filled PDF.
 # ---------------------------------------------------------------------------
 _FIELD_MAP = {
     "NameOfEmployee":           ("traveler", "name"),
@@ -30,6 +35,7 @@ _FIELD_MAP = {
     "dayslodgingamount":        ("root",     "lodging_rate"),
     "vehiclemileage":           ("root",     "_mileage_total"),
     "Text Field 173":           ("root",     "comments"),
+    "Text Field 128":           ("root",     "comments"),
     "Text Field 129":           ("root",     "hotel_name"),
     "Text Field 130":           ("root",     "hotel_city"),
     "Text Field 166":           ("traveler", "org_code"),
@@ -50,16 +56,13 @@ def _parse_number(val: str) -> float:
         return 0.0
 
 
-def extract_travel_request(file_bytes: bytes, filename: str) -> dict:
-    """Extract fields from a filled WSDOT Form 700-006 PDF.
-
-    Returns a dict compatible with TravelIntake.from_dict().
-    """
-    from pypdf import PdfReader
-    import io
-
-    reader = PdfReader(io.BytesIO(file_bytes))
+def _acroform_extract(file_bytes: bytes) -> dict:
+    """Extract values from AcroForm fields. Returns {} if none found."""
+    import pypdf
+    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
     fields = reader.get_fields() or {}
+    if not fields:
+        return {}
 
     traveler: dict = {}
     root: dict = {}
@@ -71,7 +74,6 @@ def extract_travel_request(file_bytes: bytes, filename: str) -> dict:
         raw = field.get("/V", "")
         if raw in (None, "", "/Off"):
             continue
-        # pypdf returns NameObject strings like '/Yes' for checkboxes
         if isinstance(raw, str) and raw.startswith("/"):
             raw = raw[1:]
 
@@ -87,22 +89,99 @@ def extract_travel_request(file_bytes: bytes, filename: str) -> dict:
         else:
             root[key] = val
 
-    # Derive last_first from full name if not separately stored
-    name = traveler.get("name", "")
+    root["traveler"] = traveler
+    return root
+
+
+def _text_extract(file_bytes: bytes) -> dict:
+    """Extract text from PDF pages and parse key fields with regex."""
+    import pypdf
+    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+    text = "\n".join(p.extract_text() or "" for p in reader.pages)
+
+    def _after(label: str, text: str, width: int = 80) -> str:
+        m = re.search(re.escape(label) + r"[:\s]*([^\n]{1," + str(width) + r"})", text, re.I)
+        return m.group(1).strip() if m else ""
+
+    def _currency(label: str) -> float:
+        m = re.search(re.escape(label) + r"[:\s]*\$?([\d,]+\.?\d*)", text, re.I)
+        return float(m.group(1).replace(",", "")) if m else 0.0
+
+    traveler = {
+        "name": _after("Name of Employee", text) or _after("Employee Name", text),
+        "supervisor_name": _after("Supervisor", text),
+    }
+
+    root = {
+        "event_title":          _after("Event Title", text) or _after("Meeting.*Title", text),
+        "destination_city":     _after("Destination", text),
+        "departure_datetime":   _after("Departure Date", text),
+        "return_datetime":      _after("Return Date", text),
+        "registration_fee":     _currency("Registration Fee"),
+        "airfare":              _currency("Air Fare"),
+        "hotel_name":           _after("Hotel", text) or _after("Motel", text),
+        "hotel_city":           _after("Hotel.*City", text),
+        "comments":             _after("Justification", text, 200),
+        "traveler":             traveler,
+    }
+    return root
+
+
+def _merge(base: dict, overlay: dict) -> dict:
+    """Fill in missing keys in base from overlay."""
+    result = dict(base)
+    for k, v in overlay.items():
+        if k == "traveler":
+            t = dict(result.get("traveler") or {})
+            for tk, tv in (v or {}).items():
+                if tv and not t.get(tk):
+                    t[tk] = tv
+            result["traveler"] = t
+        elif v and not result.get(k):
+            result[k] = v
+    return result
+
+
+def extract_travel_request(file_bytes: bytes, filename: str) -> dict:
+    """Extract fields from a filled WSDOT Form 700-006 PDF.
+
+    Tries AcroForm field extraction first; falls back to text parsing.
+    Returns a dict compatible with TravelIntake.from_dict().
+    """
+    result: dict = {}
+
+    # Try AcroForm extraction
+    try:
+        acro = _acroform_extract(file_bytes)
+        if acro:
+            result = acro
+    except Exception:
+        pass
+
+    # Try text extraction and merge any missing fields
+    try:
+        text_data = _text_extract(file_bytes)
+        result = _merge(result, text_data)
+    except Exception:
+        pass
+
+    # Derive last_first from full name
+    name = (result.get("traveler") or {}).get("name", "")
     if name and "," not in name:
         parts = name.strip().split()
         if len(parts) >= 2:
-            traveler["name_last_first_initial"] = (
+            lfi = (
                 f"{parts[-1]}, {parts[0]}, {parts[1][0]}" if len(parts) >= 3
                 else f"{parts[-1]}, {parts[0]}"
             )
+            result.setdefault("traveler", {})["name_last_first_initial"] = lfi
 
-    root["traveler"] = traveler
-    root.setdefault("daily_expenses", [])
-    root.setdefault("account_codes", [])
-    root.setdefault("other_expenses", [])
+    result.setdefault("traveler", {})
+    result.setdefault("daily_expenses", [])
+    result.setdefault("account_codes", [])
+    result.setdefault("other_expenses", [])
 
-    return root
+    return result
 
 
 def merge_receipts(intake: dict, receipts: list[dict]) -> dict:
