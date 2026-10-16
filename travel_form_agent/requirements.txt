@@ -1,5 +1,7 @@
 anthropic>=1.0.0
 pypdf>=4.0.0
+pytesseract>=0.3.10
+pdf2image>=1.17.0
 streamlit>=1.33.0
 requests>=2.31.0
 staticmap>=0.5.4

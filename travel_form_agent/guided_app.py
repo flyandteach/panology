@@ -777,23 +777,60 @@ with tab_import:
         imp_function   = ia8.text_input("Function",   value=imp_acc.get("function", ""),   key="imp_function")
 
         st.markdown("### Receipts / expense lines")
-        st.caption("Add each expense item. Object codes are assigned automatically.")
-        num_receipts = st.number_input("Number of expense lines", min_value=1, max_value=10, value=1, key="imp_num_r")
+        st.caption("Upload receipts to auto-fill fields, or enter manually. Object codes are assigned automatically.")
+
+        # OCR receipt upload
+        imp_receipts_upload = st.file_uploader(
+            "Upload receipts (PDF, JPG, PNG) — optional, scans each for vendor/date/amount",
+            type=["pdf", "jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="imp_receipts_upload",
+        )
+        if imp_receipts_upload and st.button("Scan receipts with OCR", key="imp_ocr"):
+            from travel_agent.ocr_receipt import extract_receipt_from_file
+            scanned = []
+            for f in imp_receipts_upload:
+                with st.spinner(f"Scanning {f.name}…"):
+                    try:
+                        result = extract_receipt_from_file(f.getvalue(), f.name)
+                        result["_filename"] = f.name
+                        scanned.append(result)
+                        st.success(f"{f.name}: {result.get('vendor','')} | {result.get('date','')} | ${result.get('amount',0):.2f}")
+                    except Exception as e:
+                        st.warning(f"{f.name}: OCR failed ({e}), fill in manually.")
+                        scanned.append({"vendor": "", "date": "", "amount": 0.0, "_filename": f.name})
+            st.session_state["imp_scanned_receipts"] = scanned
+
+        scanned_defaults = st.session_state.get("imp_scanned_receipts", [])
+        num_receipts = st.number_input(
+            "Number of expense lines",
+            min_value=max(1, len(scanned_defaults)),
+            max_value=10,
+            value=max(1, len(scanned_defaults)),
+            key="imp_num_r",
+        )
         receipt_rows = []
         for ri in range(int(num_receipts)):
-            with st.expander(f"Expense {ri + 1}", expanded=(ri == 0)):
+            default = scanned_defaults[ri] if ri < len(scanned_defaults) else {}
+            label = f"Expense {ri + 1}" + (f" – {default.get('_filename','')}" if default.get("_filename") else "")
+            with st.expander(label, expanded=(ri == 0)):
                 rc1, rc2, rc3 = st.columns(3)
-                r_date    = rc1.text_input("Date (YYYY-MM-DD)", key=f"ir_date_{ri}")
-                r_paid_to = rc2.text_input("Paid to / vendor",  key=f"ir_vendor_{ri}")
-                r_desc    = rc3.text_input("For what",          key=f"ir_desc_{ri}")
+                r_date    = rc1.text_input("Date (YYYY-MM-DD)", value=default.get("date", ""),   key=f"ir_date_{ri}")
+                r_paid_to = rc2.text_input("Paid to / vendor",  value=default.get("vendor", ""), key=f"ir_vendor_{ri}")
+                r_desc    = rc3.text_input("For what",          value="",                         key=f"ir_desc_{ri}")
                 rc4, rc5 = st.columns(2)
-                r_amt     = rc4.number_input("Amount ($)", min_value=0.0, step=0.01, key=f"ir_amt_{ri}")
+                r_amt     = rc4.number_input("Amount ($)", min_value=0.0, step=0.01,
+                                             value=float(default.get("amount", 0) or 0),
+                                             key=f"ir_amt_{ri}")
                 r_type    = rc5.selectbox(
                     "Expense type",
                     ["registration", "lodging", "airfare", "parking", "taxi",
                      "rideshare", "ferry", "toll", "bus", "rail", "other"],
                     key=f"ir_type_{ri}",
                 )
+                if default.get("raw_text"):
+                    with st.expander("OCR raw text", expanded=False):
+                        st.text(default["raw_text"])
                 if r_amt > 0:
                     receipt_rows.append({
                         "date": r_date,
