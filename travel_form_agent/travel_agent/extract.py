@@ -139,68 +139,34 @@ def _dollar(label: str, text: str) -> float:
 
 def _parse_charge_codes(text: str) -> list[dict]:
     """
-    Parse the charge code table from the Form 700-006 (WSDOT).
+    Parse the charge code table using positional double-newline-separated values.
 
-    Form 700-006 column headers (Chart of Accounts M 13-02):
-      Program | Task Order | Fund | Dept | Unit | Sub Unit |
-      Object | Activity | Location | Appr Unit | Function | Bal Sheet
+    Form 700-006 columns (Task Order, Location, Bal Sheet are typically blank
+    for conference travel and are absent from the extracted text stream):
+      Program | Fund | Dept | Unit | Sub Unit | Object | Activity | Appr Unit | Function
 
-    Object codes are NOT extracted here — they are auto-assigned per
-    expense type when building the expense voucher.  We extract the
-    base fields that are constant across all charge code rows.
+    Expected pattern (e.g.): AVOPS\n\n039\n\n405\n\n6910\n\n10\n\nGA01\n\nF501\n\n310\n\n0605
+    Object code is captured but overridden per expense type at voucher-build time.
     """
-    # Narrow to the Charge Codes section if possible
-    m = re.search(r"Charge\s*Codes?(.*)", text, re.I | re.S)
-    section = m.group(1)[:800] if m else text
-
-    # --- helpers to pull the first non-header token after a label ---
-    def _val(label: str, src: str, width: int = 20) -> str:
-        mv = re.search(label + r"[:\s]+([A-Za-z0-9]+)", src, re.I)
-        return mv.group(1).strip() if mv else ""
-
-    # Program (e.g. AVOPS)
-    program = _val(r"Program", section) or _after(r"Program", text, 15)
-
-    # Task Order / Work Order — often blank for conference travel
-    work_order = _val(r"Task\s*Order|Work\s*Order", section) or _after(r"Task\s*Order|Work\s*Order", text, 20)
-
-    # Fund (3-digit, e.g. 039)
-    fund = _val(r"\bFund\b", section) or _after(r"\bFund\b", text, 10)
-
-    # Dept (column U in 133-103 XLSX, maps to org_code field, e.g. 405)
-    dept = _val(r"\bDept\b", section) or _after(r"\bDept\b", text, 10)
-
-    # Unit (column AA in XLSX, e.g. 6910)
-    unit = _val(r"\bUnit\b(?!\s*[Ss]ub|\s*[Aa]ppr)", section) or ""
-    if not unit:
-        # fallback: look for 4-digit number after Fund/Dept but before Object code
-        mu = re.search(r"\b(\d{4})\b", section[section.find(fund or ""):] if fund else section)
-        unit = mu.group(1) if mu else ""
-
-    # Sub Unit (e.g. 10)
-    subunit = _val(r"Sub\s*[Uu]nit", section) or _after(r"Sub\s*[Uu]nit", text, 10)
-
-    # Activity (e.g. F501)
-    activity = _val(r"\bActivity\b", section) or _after(r"\bActivity\b", text, 15)
-
-    # Appr Unit / Appropriation (e.g. 310)
-    appr = _val(r"Appr(?:opriation)?\s*(?:Unit)?", section) or _after(r"Appr(?:opriation)?\s*(?:Unit)?", text, 15)
-
-    # Function (e.g. 0605)
-    function = _val(r"\bFunction\b", section) or _after(r"\bFunction\b", text, 10)
-
-    if any([program, fund, dept, unit, activity]):
+    # Match: Program(alpha) Fund(3d) Dept(3d) Unit(3-5d) SubUnit(1-4d)
+    #        Object(2alpha+2d) Activity(1alpha+3d) ApprUnit(3d) Function(4d)
+    m = re.search(
+        r'([A-Z]{2,8})\n\n(\d{3})\n\n(\d{3})\n\n(\d{3,5})\n\n(\d{1,4})\n\n'
+        r'([A-Z]{2}\d{2})\n\n([A-Z]\d{3})\n\n(\d{3})\n\n(\d{4})',
+        text,
+    )
+    if m:
         return [{
-            "program":       program,
-            "work_order":    work_order,
-            "fund":          fund,
-            "org_code":      dept,   # Dept column → org_code field → XLSX column U
-            "unit":          unit,
-            "subunit":       subunit,
-            "object_code":   "",     # assigned per expense type at voucher-build time
-            "activity":      activity,
-            "appropriation": appr,
-            "function":      function,
+            "program":       m.group(1),
+            "work_order":    "",
+            "fund":          m.group(2),
+            "org_code":      m.group(3),   # Dept column → org_code field → XLSX col U
+            "unit":          m.group(4),
+            "subunit":       m.group(5),
+            "object_code":   "",           # assigned per expense type at voucher-build time
+            "activity":      m.group(7),
+            "appropriation": m.group(8),
+            "function":      m.group(9),
             "bal_sheet":     "",
         }]
     return []
@@ -236,9 +202,6 @@ def _text_extract(text: str) -> tuple[dict, dict]:
         # "Name of Employee" label on line, value follows on same or next line
         "name": _after(
             r"Name\s*of\s*Employee|Employee\s*Name", text, 60),
-        # "Supervisor Printed Name" / "Traveler's Supervisor"
-        "supervisor_name": _after(
-            r"Supervisor(?:'s)?\s*(?:Printed\s*)?Name|Traveler.s\s*Supervisor", text, 60),
         # "Approving Authority Printed Name"
         "approving_authority_name": _after(
             r"Approving\s*Authority\s*(?:Printed\s*)?Name|Approv(?:ing)?\s*Authority", text, 60),
@@ -252,6 +215,11 @@ def _text_extract(text: str) -> tuple[dict, dict]:
         "class_title": _after(
             r"Class(?:ification)?(?:\s*Title)?|Position\s*Title|Job\s*Class", text, 30),
     }
+
+    # Supervisor name: blank if the form is unsigned (field shows only "Date" label)
+    raw_sup = _after(r"Supervisor(?:'s)?\s*(?:Printed\s*)?Name|Traveler.s\s*Supervisor", text, 60)
+    if raw_sup and not re.fullmatch(r'Date|Time|Signature|N/?A', raw_sup, re.I):
+        traveler["supervisor_name"] = raw_sup
 
     root = {
         # Full label from form: "Meeting/Training/Conference Event Title"
@@ -284,25 +252,57 @@ def _text_extract(text: str) -> tuple[dict, dict]:
             r"Justification\s*(?:and\s*[Bb]enefit\s*to\s*WSDOT)?|Benefit\s*to\s*WSDOT|Purpose\s*of\s*Travel",
             text, 500),
         "registration_fee": _dollar(r"Registration\s*Fee", text),
-        "airfare":          _dollar(r"Air\s*[Ff]are|Airfare", text),
-        # Per-day rate for subsistence: "X Days Subsistence @ $68.00 per day" or "Subsistence rate $68"
-        "subsistence_rate": _dollar(
-            r"Subsistence\s*(?:@|at|per\s*day|rate|amount)|@\s*\$[\d.]+\s*per\s*day", text),
-        # Per-night lodging rate
-        "lodging_rate": _dollar(
-            r"Lodging\s*(?:@|at|per\s*night|rate|nightly|amount)|@\s*\$[\d.]+\s*per\s*night", text),
     }
 
-    # Subsistence day count: "3 Days Subsistence" or "Days Subsistence: 3"
-    m = re.search(r"(\d+)\s*[Dd]ays?\s*(?:Subsistence|Meals?)|[Dd]ays?\s*Subsistence[:\s]+(\d+)", text)
-    if m:
-        root["subsistence_days"] = int(m.group(1) or m.group(2))
-    # Lodging night count: "2 Nights Lodging" or "Days Lodging: 2"
-    m = re.search(
-        r"(\d+)\s*[Nn]ights?\s*(?:[Ll]odging)?|[Dd]ays?\s*[Ll]odging[:\s]+(\d+)|[Ll]odging[:\s]+(\d+)\s*[Nn]ights?",
-        text)
-    if m:
-        root["lodging_days"] = int(next(g for g in m.groups() if g is not None))
+    # ---------------------------------------------------------------------------
+    # Airfare, subsistence, lodging — Form 700-006 Section A has two columns.
+    # pdftotext interleaves them: adjacent-column values bleed across label lines.
+    #
+    # Layout in extracted text:
+    #   "Air Fare $\n<subsistence_days>\n\nper day = $\n\n<sub_total>\n\nper day = $\n\n$ <lodging_rate>"
+    #   "Days subsistence at\n\n<lodging_days>\n\nDays lodging at\n\n$\n\n<meal_rate>"
+    #
+    # Reliable sources:
+    #   - Airfare: only if double-\n\n separates it from "Air Fare $"
+    #   - Subsistence days: single-\n digit after "Air Fare $" (adjacent column)
+    #   - Subsistence rate: 150% section "Per diem meal rate $ 68"
+    #   - Lodging days: digit after "Days subsistence at\n\n" (adjacent column)
+    #   - Lodging rate: 150% section "is (rate) $ 198.75"
+    # ---------------------------------------------------------------------------
+
+    # Airfare: value only present if preceded by double newline
+    m_air_val = re.search(r"Air\s*[Ff]are\s*\$\s*\n\n\s*([\d,]+\.?\d*)", text)
+    root["airfare"] = float(m_air_val.group(1).replace(",", "")) if m_air_val else 0.0
+
+    # Subsistence days: digit on line immediately following "Air Fare $" (single \n)
+    m_subdays = re.search(r"Air\s*[Ff]are\s*\$\s*\n(\d+)", text)
+    if m_subdays:
+        root["subsistence_days"] = int(m_subdays.group(1))
+
+    # Lodging days: digit after "Days subsistence at\n\n" (garbled adjacent column)
+    m_lodgdays = re.search(r"Days\s+subsistence\s+at\s*\n\n(\d+)", text, re.I)
+    if m_lodgdays:
+        root["lodging_days"] = int(m_lodgdays.group(1))
+
+    # Subsistence rate: from the 150% section's explicit "Per diem meal rate $ XX"
+    m_subrate = re.search(r"[Pp]er\s*diem\s*meal\s*rate\s*\$\s*([\d.]+)", text)
+    if m_subrate:
+        root["subsistence_rate"] = float(m_subrate.group(1))
+
+    # Lodging rate: from 150% section's explicit "is (rate) $ 198.75"
+    m_lodgrate = re.search(r"is\s*\(rate\)\s*\$\s*([\d.]+)", text, re.I)
+    if m_lodgrate:
+        root["lodging_rate"] = float(m_lodgrate.group(1))
+
+    # Fallback subsistence rate from standard label patterns (non-150% forms)
+    if not root.get("subsistence_rate"):
+        root["subsistence_rate"] = _dollar(
+            r"Subsistence\s*(?:@|at|per\s*day|rate|amount)|@\s*\$[\d.]+\s*per\s*day", text) or None
+
+    # Fallback lodging rate from standard label patterns (non-150% forms)
+    if not root.get("lodging_rate"):
+        root["lodging_rate"] = _dollar(
+            r"Lodging\s*(?:@|at|per\s*night|rate|nightly|amount)|@\s*\$[\d.]+\s*per\s*night", text) or None
 
     # 150% rule
     rule = _parse_150_rule(text)
