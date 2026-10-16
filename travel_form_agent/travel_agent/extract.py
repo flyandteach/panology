@@ -228,39 +228,81 @@ def _parse_150_rule(text: str) -> dict:
 
 
 def _text_extract(text: str) -> tuple[dict, dict]:
-    """Parse labeled fields from PDF text. Returns (traveler, root)."""
+    """Parse labeled fields from PDF text. Returns (traveler, root).
+
+    Label patterns are tuned to WSDOT Form 700-006 printed text.
+    """
     traveler = {
-        "name":                   _after(r"Name\s*of\s*Employee|Employee\s*Name", text, 60),
-        "supervisor_name":        _after(r"Supervisor(?:'s)?\s*(?:Name)?|Supervisor\s*Printed", text, 60),
-        "approving_authority_name": _after(r"Approv(?:ing)?\s*Authority|Approving\s*Official", text, 60),
-        "employee_id":            _after(r"Employee\s*(?:ID|#|Number)", text, 20),
-        "official_station":       _after(r"Official\s*Station|Duty\s*Station", text, 40),
-        "class_title":            _after(r"Class(?:\s*Title)?|Position\s*Title", text, 30),
+        # "Name of Employee" label on line, value follows on same or next line
+        "name": _after(
+            r"Name\s*of\s*Employee|Employee\s*Name", text, 60),
+        # "Supervisor Printed Name" / "Traveler's Supervisor"
+        "supervisor_name": _after(
+            r"Supervisor(?:'s)?\s*(?:Printed\s*)?Name|Traveler.s\s*Supervisor", text, 60),
+        # "Approving Authority Printed Name"
+        "approving_authority_name": _after(
+            r"Approving\s*Authority\s*(?:Printed\s*)?Name|Approv(?:ing)?\s*Authority", text, 60),
+        # "Employee No." / "Employee ID" / "Empl No" / "Employee Number"
+        "employee_id": _after(
+            r"Employee\s*(?:No\.?|ID|#|Number|Num\.?)|Empl\.?\s*(?:No\.?|ID|#)", text, 20),
+        # "Official Station" (Vancouver, Olympia, etc.)
+        "official_station": _after(
+            r"Official\s*(?:Work\s*)?Station|Duty\s*Station|Home\s*Station", text, 40),
+        # "Class Title" / "Position Title" / "Classification"
+        "class_title": _after(
+            r"Class(?:ification)?(?:\s*Title)?|Position\s*Title|Job\s*Class", text, 30),
     }
 
     root = {
-        "event_title":          _after(r"Event\s*Title|Conference.*?Title|Meeting.*?Title|Training.*?Title", text, 100),
-        "destination_city":     _after(r"Destination\s*(?:City)?(?:/State)?", text, 60),
-        "departure_datetime":   _after(r"Departure\s*Date(?:/Time)?", text, 30),
-        "return_datetime":      _after(r"Return\s*Date(?:/Time)?", text, 30),
-        "meeting_begin_datetime": _after(r"(?:Conference|Meeting|Event)\s*[Bb]egins?|Begin\s*Date", text, 30),
-        "meeting_end_datetime": _after(r"(?:Conference|Meeting|Event)\s*[Ee]nds?|End\s*Date", text, 30),
-        "hotel_name":           _after(r"(?:Name\s*of\s*)?Hotel(?:/Motel)?(?:\s*Name)?", text, 60),
-        "hotel_city":           _after(r"Hotel\s*City|City\s*(?:of\s*)?Hotel", text, 40),
-        "comments":             _after(r"Justification|Benefit\s*to\s*WSDOT", text, 300),
-        "registration_fee":     _dollar(r"Registration\s*Fee", text),
-        "airfare":              _dollar(r"Air\s*[Ff]are|Airfare", text),
-        "subsistence_rate":     _dollar(r"Subsistence\s*(?:per\s*day|rate)", text),
-        "lodging_rate":         _dollar(r"Lodging\s*(?:per\s*night|rate|nightly)", text),
+        # Full label from form: "Meeting/Training/Conference Event Title"
+        "event_title": _after(
+            r"(?:Meeting|Training|Conference)\s*/\s*(?:Training|Conference)\s*/?\s*(?:Conference\s*)?Event\s*Title"
+            r"|Event\s*Title|Conference\s*(?:Name|Title)|Meeting\s*Title|Training\s*Title",
+            text, 120),
+        "destination_city": _after(
+            r"Destination\s*(?:City)?(?:/State)?|Destination\s*Location", text, 60),
+        # "Departure Date/Time"
+        "departure_datetime": _after(
+            r"Departure\s*Date(?:/Time)?|Depart(?:ure)?\s*Date", text, 35),
+        # "Return Date/Time"
+        "return_datetime": _after(
+            r"Return\s*Date(?:/Time)?", text, 35),
+        # "Conference/Meeting begins Date/Time"
+        "meeting_begin_datetime": _after(
+            r"(?:Conference|Meeting|Event)\s*[Bb]egins?\s*(?:Date(?:/Time)?)?|Begin(?:s)?\s*Date", text, 35),
+        # "Conference/Meeting ends Date/Time"
+        "meeting_end_datetime": _after(
+            r"(?:Conference|Meeting|Event)\s*[Ee]nds?\s*(?:Date(?:/Time)?)?|End(?:s)?\s*Date", text, 35),
+        # "Name of Hotel/Motel"
+        "hotel_name": _after(
+            r"Name\s*of\s*Hotel(?:/Motel)?|Hotel(?:/Motel)?\s*Name|Hotel\s*Name", text, 60),
+        # "City" in lodging section — look in a narrow window after hotel name if possible
+        "hotel_city": _after(
+            r"Hotel\s*City|City\s*(?:of\s*)?Hotel|(?:Hotel[^:]{0,40})City", text, 40),
+        # "Justification and benefit to WSDOT:"
+        "comments": _after(
+            r"Justification\s*(?:and\s*[Bb]enefit\s*to\s*WSDOT)?|Benefit\s*to\s*WSDOT|Purpose\s*of\s*Travel",
+            text, 500),
+        "registration_fee": _dollar(r"Registration\s*Fee", text),
+        "airfare":          _dollar(r"Air\s*[Ff]are|Airfare", text),
+        # Per-day rate for subsistence: "X Days Subsistence @ $68.00 per day" or "Subsistence rate $68"
+        "subsistence_rate": _dollar(
+            r"Subsistence\s*(?:@|at|per\s*day|rate|amount)|@\s*\$[\d.]+\s*per\s*day", text),
+        # Per-night lodging rate
+        "lodging_rate": _dollar(
+            r"Lodging\s*(?:@|at|per\s*night|rate|nightly|amount)|@\s*\$[\d.]+\s*per\s*night", text),
     }
 
-    # Subsistence/lodging day counts
-    m = re.search(r"(\d+)\s*[Dd]ay[s]?\s*(?:subsistence|meal)", text)
+    # Subsistence day count: "3 Days Subsistence" or "Days Subsistence: 3"
+    m = re.search(r"(\d+)\s*[Dd]ays?\s*(?:Subsistence|Meals?)|[Dd]ays?\s*Subsistence[:\s]+(\d+)", text)
     if m:
-        root["subsistence_days"] = int(m.group(1))
-    m = re.search(r"(\d+)\s*[Nn]ight[s]?\s*(?:lodging)?|(?:lodging)\s*(\d+)\s*[Nn]ight", text)
+        root["subsistence_days"] = int(m.group(1) or m.group(2))
+    # Lodging night count: "2 Nights Lodging" or "Days Lodging: 2"
+    m = re.search(
+        r"(\d+)\s*[Nn]ights?\s*(?:[Ll]odging)?|[Dd]ays?\s*[Ll]odging[:\s]+(\d+)|[Ll]odging[:\s]+(\d+)\s*[Nn]ights?",
+        text)
     if m:
-        root["lodging_days"] = int(m.group(1) or m.group(2))
+        root["lodging_days"] = int(next(g for g in m.groups() if g is not None))
 
     # 150% rule
     rule = _parse_150_rule(text)
