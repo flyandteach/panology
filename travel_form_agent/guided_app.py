@@ -777,17 +777,23 @@ with tab_import:
         st.markdown("### Charge codes")
         st.caption("Enter the charge code fields. Object code is set per expense type.")
         imp_acc = (payload_imp.get("account_codes") or [{}])[0]
+        ss = st.session_state
+        def _acc_val(pdf_key, profile_key):
+            """PDF extraction first, then saved profile, then blank."""
+            return imp_acc.get(pdf_key) or ss.get(profile_key, "")
+
         ia1, ia2, ia3 = st.columns(3)
-        imp_program    = ia1.text_input("Program",    value=imp_acc.get("program", ""),    key="imp_program")
-        imp_work_order = ia2.text_input("Task Order", value=imp_acc.get("work_order", ""), key="imp_work_order")
-        imp_fund       = ia3.text_input("Fund",       value=imp_acc.get("fund", ""),       key="imp_fund")
+        imp_program    = ia1.text_input("Program",    value=_acc_val("program",       "p_program"),    key="imp_program")
+        imp_work_order = ia2.text_input("Task Order", value=_acc_val("work_order",    "p_work_order"), key="imp_work_order")
+        imp_fund       = ia3.text_input("Fund",       value=_acc_val("fund",          "p_fund"),       key="imp_fund")
         ia4, ia5, ia6 = st.columns(3)
-        imp_org        = ia4.text_input("Dept",       value=imp_acc.get("org_code", t.get("org_code", "")), key="imp_org")
-        imp_unit       = ia5.text_input("Unit",       value=imp_acc.get("unit", ""),       key="imp_unit")
-        imp_subunit    = ia6.text_input("Sub Unit",   value=imp_acc.get("subunit", ""),    key="imp_subunit")
-        ia7, ia8 = st.columns(2)
-        imp_activity   = ia7.text_input("Activity",   value=imp_acc.get("activity", ""),   key="imp_activity")
-        imp_function   = ia8.text_input("Function",   value=imp_acc.get("function", ""),   key="imp_function")
+        imp_org        = ia4.text_input("Dept",       value=imp_acc.get("org_code") or t.get("org_code") or ss.get("p_org_code", ""), key="imp_org")
+        imp_unit       = ia5.text_input("Unit",       value=_acc_val("unit",          "p_unit"),       key="imp_unit")
+        imp_subunit    = ia6.text_input("Sub Unit",   value=_acc_val("subunit",       "p_subunit"),    key="imp_subunit")
+        ia7, ia8, ia9 = st.columns(3)
+        imp_activity   = ia7.text_input("Activity",   value=_acc_val("activity",      "p_activity"),   key="imp_activity")
+        imp_function   = ia8.text_input("Function",   value=_acc_val("function",      "p_function"),   key="imp_function")
+        imp_appr_unit  = ia9.text_input("Appr Unit",  value=_acc_val("appropriation", "p_appr_unit"),  key="imp_appr_unit")
 
         st.markdown("### Receipts / expense lines")
         st.caption("Upload receipts to auto-fill fields, or enter manually. Object codes are assigned automatically.")
@@ -870,8 +876,8 @@ with tab_import:
                     "subunit":       imp_subunit,
                     "activity":      imp_activity,
                     "function":      imp_function,
-                    "appropriation": imp_acc.get("appropriation", ""),
-                    "bal_sheet":     imp_acc.get("bal_sheet", ""),
+                    "appropriation": imp_appr_unit or imp_acc.get("appropriation", ""),
+                    "bal_sheet":     imp_acc.get("bal_sheet", ss.get("p_bal_sheet", "")),
                 }
 
                 # Build account_codes from receipt rows
