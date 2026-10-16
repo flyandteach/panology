@@ -1,197 +1,337 @@
-"""Extract structured travel data from documents using Claude vision API."""
+"""Extract structured travel data from a filled WSDOT Form 700-006 PDF.
+
+Strategy:
+1. AcroForm field extraction (pypdf get_fields) — captures digitally-filled values.
+2. Text extraction + regex — captures all labeled fields including charge codes
+   and the 150% lodging exception.
+Both are attempted and merged; whichever finds more data wins per field.
+No external API required.
+"""
 
 from __future__ import annotations
 
-import base64
-import json
-from pathlib import Path
+import io
+import re
 from typing import Optional
 
-import anthropic
 
-_SYSTEM = """You are a WSDOT travel expense expert. Extract structured data from travel documents.
-Return ONLY valid JSON, no prose, no markdown code blocks."""
-
-_TRAVEL_REQUEST_PROMPT = """Extract all available fields from this approved WSDOT travel request document.
-Return a JSON object with these fields (omit fields not found):
-{
-  "traveler": {
-    "name": "",
-    "employee_id": "",
-    "class_title": "",
-    "official_station": "",
-    "official_residence": "",
-    "address": "",
-    "city": "",
-    "state": "",
-    "zip_code": "",
-    "regular_work_hours": "",
-    "supervisor_name": ""
-  },
-  "event_title": "",
-  "destination_city": "",
-  "departure_datetime": "",
-  "return_datetime": "",
-  "meeting_begin_datetime": "",
-  "meeting_end_datetime": "",
-  "registration_fee": 0,
-  "airfare": 0,
-  "lodging_days": 0,
-  "lodging_rate": 0,
-  "hotel_name": "",
-  "hotel_city": "",
-  "comments": "",
-  "remarks": "",
-  "signature_date": "",
-  "travel_advance": 0,
-  "account_codes": [
-    {
-      "program": "", "work_order": "", "fund": "", "org_code": "",
-      "unit": "", "subunit": "", "object_code": "", "activity": "",
-      "appropriation": "", "function": "", "bal_sheet": "", "amount": 0
-    }
-  ]
+# ---------------------------------------------------------------------------
+# Known AcroForm field names (Form 700-006, verified from fill_pdf.py tooltips).
+# A filled PDF may use these names; the debug dump on Streamlit Cloud will
+# confirm the actual names and allow mapping updates.
+# ---------------------------------------------------------------------------
+_ACRO_FIELD_MAP = {
+    "NameOfEmployee":           ("traveler", "name"),
+    "Text Field 168":           ("root",     "event_title"),
+    "Text Field 176":           ("root",     "destination_city"),
+    "Text Field 177":           ("root",     "departure_datetime"),
+    "Text Field 178":           ("root",     "return_datetime"),
+    "Text Field 179":           ("root",     "meeting_begin_datetime"),
+    "Text Field 180":           ("root",     "meeting_end_datetime"),
+    "RegistrationFee":          ("root",     "registration_fee"),
+    "AirFare":                  ("root",     "airfare"),
+    "dayssubsistence":          ("root",     "subsistence_days"),
+    "dayssubsistenceamount":    ("root",     "subsistence_rate"),
+    "dayslodging":              ("root",     "lodging_days"),
+    "dayslodgingamount":        ("root",     "lodging_rate"),
+    "vehiclemileage":           ("root",     "_mileage_total"),
+    "Text Field 173":           ("root",     "comments"),
+    "Text Field 128":           ("root",     "comments"),
+    "Text Field 129":           ("root",     "hotel_name"),
+    "Text Field 130":           ("root",     "hotel_city"),
+    "Text Field 166":           ("traveler", "org_code"),
+    "Text Field 136":           ("root",     "signature_date"),
+    "Text Field 234":           ("traveler", "supervisor_name"),
+    "Text Field 235":           ("traveler", "approving_authority_name"),
 }
-For dates use format YYYY-MM-DD. For datetimes use "MM/DD/YY HHMM"."""
 
-_RECEIPT_PROMPT = """Extract expense information from this receipt/invoice/folio.
-Return a JSON object:
-{
-  "vendor": "",
-  "date": "",
-  "amount": 0.0,
-  "description": "",
-  "expense_type": ""
-}
-For date use YYYY-MM-DD format.
-For expense_type use one of: lodging, airfare, registration, parking, taxi, rideshare, ferry, toll, other."""
-
-_HOTEL_PROMPT = """Extract hotel stay information from this hotel folio/receipt.
-Return a JSON object:
-{
-  "hotel_name": "",
-  "hotel_city": "",
-  "check_in": "",
-  "check_out": "",
-  "nightly_rate": 0.0,
-  "num_nights": 0,
-  "total_amount": 0.0,
-  "lodging_entries": [
-    {"date": "", "amount": 0.0}
-  ]
-}
-For dates use YYYY-MM-DD format."""
+_CURRENCY_KEYS = {"registration_fee", "airfare", "subsistence_rate", "lodging_rate", "_mileage_total"}
+_INT_KEYS = {"subsistence_days", "lodging_days"}
 
 
-def _encode_file(file_bytes: bytes, media_type: str) -> dict:
-    data = base64.standard_b64encode(file_bytes).decode("utf-8")
-    return {"type": "base64", "media_type": media_type, "data": data}
+def _clean_num(val: str) -> float:
+    cleaned = re.sub(r"[^\d.]", "", str(val))
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
 
 
-def _media_type(filename: str) -> str:
-    ext = Path(filename).suffix.lower()
-    return {
-        ".pdf": "application/pdf",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-    }.get(ext, "application/pdf")
+# ---------------------------------------------------------------------------
+# Debug helper
+# ---------------------------------------------------------------------------
+
+def dump_raw_fields(file_bytes: bytes) -> dict:
+    """Return ALL AcroForm field names → current values for debugging."""
+    import pypdf
+    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+    fields = reader.get_fields() or {}
+    out = {}
+    for k, v in fields.items():
+        raw = v.get("/V", "")
+        if isinstance(raw, str) and raw.startswith("/"):
+            raw = raw[1:]
+        out[k] = str(raw).strip() if raw not in (None, "", "/Off") else ""
+    return out
 
 
-def _call_claude(content: list) -> dict:
-    client = anthropic.Anthropic()
-    msg = client.messages.create(
-        model="claude-opus-5-5",
-        max_tokens=4096,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": content}],
-    )
-    text = msg.content[0].text.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return json.loads(text)
+# ---------------------------------------------------------------------------
+# AcroForm extraction
+# ---------------------------------------------------------------------------
+
+def _acroform_extract(file_bytes: bytes) -> tuple[dict, dict]:
+    """Return (traveler_dict, root_dict) from AcroForm fields."""
+    import pypdf
+    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+    fields = reader.get_fields() or {}
+
+    traveler: dict = {}
+    root: dict = {}
+
+    for field_name, (target, key) in _ACRO_FIELD_MAP.items():
+        field = fields.get(field_name)
+        if field is None:
+            continue
+        raw = field.get("/V", "")
+        if raw in (None, "", "/Off"):
+            continue
+        if isinstance(raw, str) and raw.startswith("/"):
+            raw = raw[1:]
+        val_str = str(raw).strip()
+        if not val_str:
+            continue
+
+        if key in _CURRENCY_KEYS:
+            val = _clean_num(val_str)
+        elif key in _INT_KEYS:
+            val = int(_clean_num(val_str))
+        else:
+            val = val_str
+
+        if target == "traveler":
+            traveler[key] = val
+        else:
+            root[key] = val
+
+    return traveler, root
 
 
-def extract_travel_request(file_bytes: bytes, filename: str) -> dict:
-    """Extract structured data from an approved travel request PDF."""
-    media_type = _media_type(filename)
-    content = [
-        {
-            "type": "document" if media_type == "application/pdf" else "image",
-            "source": _encode_file(file_bytes, media_type),
-        },
-        {"type": "text", "text": _TRAVEL_REQUEST_PROMPT},
-    ]
-    return _call_claude(content)
+# ---------------------------------------------------------------------------
+# Text extraction + regex parsing
+# ---------------------------------------------------------------------------
+
+def _pdf_text(file_bytes: bytes) -> str:
+    import pypdf
+    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+    return "\n".join(p.extract_text() or "" for p in reader.pages)
 
 
-def extract_hotel_folio(file_bytes: bytes, filename: str) -> dict:
-    """Extract hotel stay details from a hotel folio/receipt."""
-    media_type = _media_type(filename)
-    content = [
-        {
-            "type": "document" if media_type == "application/pdf" else "image",
-            "source": _encode_file(file_bytes, media_type),
-        },
-        {"type": "text", "text": _HOTEL_PROMPT},
-    ]
-    return _call_claude(content)
+def _after(label: str, text: str, width: int = 80) -> str:
+    """Return the value after a label (colon or whitespace separator)."""
+    m = re.search(label + r"[:\s]+([^\n]{1," + str(width) + r"})", text, re.I)
+    return m.group(1).strip().rstrip(".,") if m else ""
 
 
-def extract_receipt(file_bytes: bytes, filename: str) -> dict:
-    """Extract expense info from a generic receipt."""
-    media_type = _media_type(filename)
-    content = [
-        {
-            "type": "document" if media_type == "application/pdf" else "image",
-            "source": _encode_file(file_bytes, media_type),
-        },
-        {"type": "text", "text": _RECEIPT_PROMPT},
-    ]
-    return _call_claude(content)
+def _dollar(label: str, text: str) -> float:
+    m = re.search(label + r"[:\s]*\$?\s*([\d,]+\.?\d*)", text, re.I)
+    return float(m.group(1).replace(",", "")) if m else 0.0
 
 
-def merge_into_intake(
-    travel_request: dict,
-    hotel_data: Optional[dict] = None,
-    receipts: Optional[list[dict]] = None,
-) -> dict:
-    """Merge extracted document data into a TravelIntake-compatible dict."""
-    intake = dict(travel_request)
+def _parse_charge_codes(text: str) -> list[dict]:
+    """
+    Parse the charge code table from the Form 700-006 text.
+    The form has a coding section with fields like:
+      Task Order / Work Order, Fund, Org Code, Object Code, Activity, etc.
+    Returns a list of account_code dicts (usually 1–3 rows).
+    """
+    codes = []
 
-    other_expenses = list(intake.get("other_expenses", []))
-    account_codes = list(intake.get("account_codes", []))
+    # Look for blocks with task order + object code patterns
+    # Common pattern: "AD0632  039  691010  EG02  ..."
+    # Also: labeled rows like "Task Order: AD0632  Fund: 039  ..."
 
-    if hotel_data:
-        if not intake.get("hotel_name") and hotel_data.get("hotel_name"):
-            intake["hotel_name"] = hotel_data["hotel_name"]
-        if not intake.get("hotel_city") and hotel_data.get("hotel_city"):
-            intake["hotel_city"] = hotel_data["hotel_city"]
-        if not intake.get("lodging_rate") and hotel_data.get("nightly_rate"):
-            intake["lodging_rate"] = hotel_data["nightly_rate"]
-        if not intake.get("lodging_days") and hotel_data.get("num_nights"):
-            intake["lodging_days"] = hotel_data["num_nights"]
+    # Try labeled format first
+    work_order  = _after(r"Task\s*Order|Work\s*Order",  text, 20)
+    fund        = _after(r"\bFund\b",                   text, 15)
+    org_code    = _after(r"Org(?:\s*Code)?",            text, 15)
+    object_code = _after(r"Object\s*Code|Obj\.?\s*Code|Object", text, 10)
+    activity    = _after(r"\bActivity\b",               text, 15)
+    program     = _after(r"\bProgram\b",                text, 15)
+    unit        = _after(r"\bUnit\b",                   text, 15)
+    subunit     = _after(r"Sub\s*[Uu]nit",              text, 15)
+    appr        = _after(r"Appr(?:opriation)?\s*(?:Unit)?", text, 15)
+    function    = _after(r"\bFunction\b",               text, 15)
 
-        for entry in hotel_data.get("lodging_entries", []):
-            other_expenses.append({
-                "date": entry.get("date", ""),
-                "paid_to": hotel_data.get("hotel_name", "Hotel"),
-                "for_what": "Lodging",
-                "amount": entry.get("amount", hotel_data.get("nightly_rate", 0)),
-            })
-
-    for r in (receipts or []):
-        other_expenses.append({
-            "date": r.get("date", ""),
-            "paid_to": r.get("vendor", ""),
-            "for_what": r.get("description", r.get("expense_type", "")),
-            "amount": r.get("amount", 0),
+    if work_order or object_code or org_code:
+        codes.append({
+            "program":       program,
+            "work_order":    work_order,
+            "fund":          fund,
+            "org_code":      org_code,
+            "unit":          unit,
+            "subunit":       subunit,
+            "object_code":   object_code,
+            "activity":      activity,
+            "appropriation": appr,
+            "function":      function,
         })
 
-    intake["other_expenses"] = other_expenses
-    intake["account_codes"] = account_codes
-    return intake
+    # Also try to find multiple charge code rows — look for lines that look like
+    # "AD0632  039  691010  EG02  ..." (alphanumeric codes separated by spaces)
+    # Object codes follow pattern like GA01, GC01, EG02, etc.
+    obj_code_pattern = r'\b([A-Z]{2}\d{2,3})\b'
+    rows = re.findall(
+        r'(?:AD|GC|GA|GB|GD|GF|GG|GN|EG)\w+.*?(?:\d{4,6})',
+        text, re.I
+    )
+
+    return codes
+
+
+def _parse_150_rule(text: str) -> dict:
+    """
+    Detect 150% lodging exception info.
+    Returns dict with keys: applies (bool), hotel_rate, gsa_rate, percent, approved_rate.
+    """
+    result = {"applies": False}
+
+    if re.search(r"150\s*%|one\s*and\s*a\s*half|lodging\s*exception", text, re.I):
+        result["applies"] = True
+        # Try to extract the actual rate approved
+        m = re.search(r"150\s*%.*?\$?\s*([\d,]+\.?\d*)", text, re.I)
+        if m:
+            result["approved_rate"] = float(m.group(1).replace(",", ""))
+        # Look for hotel rate in the 150% section
+        m2 = re.search(r"(?:hotel|lodging|rate)[^$\n]*\$?\s*([\d,]+\.?\d*)", text, re.I)
+        if m2:
+            result["hotel_rate"] = float(m2.group(1).replace(",", ""))
+
+    return result
+
+
+def _text_extract(text: str) -> tuple[dict, dict]:
+    """Parse labeled fields from PDF text. Returns (traveler, root)."""
+    traveler = {
+        "name":                   _after(r"Name\s*of\s*Employee|Employee\s*Name", text, 60),
+        "supervisor_name":        _after(r"Supervisor(?:'s)?\s*(?:Name)?|Supervisor\s*Printed", text, 60),
+        "approving_authority_name": _after(r"Approv(?:ing)?\s*Authority|Approving\s*Official", text, 60),
+        "employee_id":            _after(r"Employee\s*(?:ID|#|Number)", text, 20),
+        "official_station":       _after(r"Official\s*Station|Duty\s*Station", text, 40),
+        "class_title":            _after(r"Class(?:\s*Title)?|Position\s*Title", text, 30),
+    }
+
+    root = {
+        "event_title":          _after(r"Event\s*Title|Conference.*?Title|Meeting.*?Title|Training.*?Title", text, 100),
+        "destination_city":     _after(r"Destination\s*(?:City)?(?:/State)?", text, 60),
+        "departure_datetime":   _after(r"Departure\s*Date(?:/Time)?", text, 30),
+        "return_datetime":      _after(r"Return\s*Date(?:/Time)?", text, 30),
+        "meeting_begin_datetime": _after(r"(?:Conference|Meeting|Event)\s*[Bb]egins?|Begin\s*Date", text, 30),
+        "meeting_end_datetime": _after(r"(?:Conference|Meeting|Event)\s*[Ee]nds?|End\s*Date", text, 30),
+        "hotel_name":           _after(r"(?:Name\s*of\s*)?Hotel(?:/Motel)?(?:\s*Name)?", text, 60),
+        "hotel_city":           _after(r"Hotel\s*City|City\s*(?:of\s*)?Hotel", text, 40),
+        "comments":             _after(r"Justification|Benefit\s*to\s*WSDOT", text, 300),
+        "registration_fee":     _dollar(r"Registration\s*Fee", text),
+        "airfare":              _dollar(r"Air\s*[Ff]are|Airfare", text),
+        "subsistence_rate":     _dollar(r"Subsistence\s*(?:per\s*day|rate)", text),
+        "lodging_rate":         _dollar(r"Lodging\s*(?:per\s*night|rate|nightly)", text),
+    }
+
+    # Subsistence/lodging day counts
+    m = re.search(r"(\d+)\s*[Dd]ay[s]?\s*(?:subsistence|meal)", text)
+    if m:
+        root["subsistence_days"] = int(m.group(1))
+    m = re.search(r"(\d+)\s*[Nn]ight[s]?\s*(?:lodging)?|(?:lodging)\s*(\d+)\s*[Nn]ight", text)
+    if m:
+        root["lodging_days"] = int(m.group(1) or m.group(2))
+
+    # 150% rule
+    rule = _parse_150_rule(text)
+    if rule["applies"]:
+        root["_150pct_rule"] = rule
+        if rule.get("hotel_rate") and not root.get("lodging_rate"):
+            root["lodging_rate"] = rule["hotel_rate"]
+
+    # Charge codes
+    charge_codes = _parse_charge_codes(text)
+    if charge_codes:
+        root["account_codes"] = charge_codes
+
+    return traveler, root
+
+
+# ---------------------------------------------------------------------------
+# Merge helpers
+# ---------------------------------------------------------------------------
+
+def _merge_dicts(base: dict, overlay: dict) -> dict:
+    """Fill empty/missing keys in base from overlay."""
+    result = dict(base)
+    for k, v in overlay.items():
+        if v and not result.get(k):
+            result[k] = v
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def extract_travel_request(file_bytes: bytes, filename: str) -> dict:
+    """Extract fields from a filled WSDOT Form 700-006 PDF.
+
+    Tries AcroForm field extraction first, then text parsing.
+    Returns a dict compatible with TravelIntake.from_dict().
+    """
+    traveler: dict = {}
+    root: dict = {}
+
+    # 1. AcroForm extraction
+    try:
+        t_acro, r_acro = _acroform_extract(file_bytes)
+        traveler = _merge_dicts(traveler, t_acro)
+        root = _merge_dicts(root, r_acro)
+    except Exception:
+        pass
+
+    # 2. Text extraction (fills gaps and picks up charge codes)
+    try:
+        text = _pdf_text(file_bytes)
+        t_text, r_text = _text_extract(text)
+        traveler = _merge_dicts(traveler, t_text)
+        # Merge root but don't overwrite non-empty charge codes from AcroForm
+        for k, v in r_text.items():
+            if k == "account_codes":
+                if not root.get("account_codes") and v:
+                    root["account_codes"] = v
+            elif v and not root.get(k):
+                root[k] = v
+    except Exception:
+        pass
+
+    # Derive name_last_first_initial
+    name = traveler.get("name", "")
+    if name and "," not in name:
+        parts = name.strip().split()
+        if len(parts) >= 2:
+            traveler["name_last_first_initial"] = (
+                f"{parts[-1]}, {parts[0]}, {parts[1][0]}" if len(parts) >= 3
+                else f"{parts[-1]}, {parts[0]}"
+            )
+
+    root["traveler"] = traveler
+    root.setdefault("daily_expenses", [])
+    root.setdefault("account_codes", root.pop("account_codes", []))
+    root.setdefault("other_expenses", [])
+
+    return root
+
+
+def merge_receipts(intake: dict, receipts: list[dict]) -> dict:
+    """Add manually-entered receipt rows into an intake dict."""
+    result = dict(intake)
+    oe = list(result.get("other_expenses", []))
+    for r in receipts:
+        if r.get("amount", 0):
+            oe.append(r)
+    result["other_expenses"] = oe
+    return result
