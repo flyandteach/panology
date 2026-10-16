@@ -56,6 +56,20 @@ def _parse_number(val: str) -> float:
         return 0.0
 
 
+def dump_raw_fields(file_bytes: bytes) -> dict:
+    """Return all AcroForm field names and their current values — for debugging."""
+    import pypdf
+    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+    fields = reader.get_fields() or {}
+    out = {}
+    for k, v in fields.items():
+        raw = v.get("/V", "")
+        if isinstance(raw, str) and raw.startswith("/"):
+            raw = raw[1:]
+        out[k] = str(raw).strip() if raw not in (None, "", "/Off") else ""
+    return out
+
+
 def _acroform_extract(file_bytes: bytes) -> dict:
     """Extract values from AcroForm fields. Returns {} if none found."""
     import pypdf

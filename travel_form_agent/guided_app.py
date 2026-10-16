@@ -728,16 +728,29 @@ with tab_import:
             st.error("Upload the approved travel request PDF first.")
         else:
             try:
-                from travel_agent.extract import extract_travel_request
+                from travel_agent.extract import dump_raw_fields, extract_travel_request
+                file_bytes = imp_travel_req.getvalue()
                 with st.spinner("Reading PDF fields…"):
-                    tr_data = extract_travel_request(
-                        imp_travel_req.getvalue(), imp_travel_req.name
-                    )
+                    raw_fields = dump_raw_fields(file_bytes)
+                    tr_data = extract_travel_request(file_bytes, imp_travel_req.name)
                 st.session_state["imp_payload"] = tr_data
+                st.session_state["imp_raw_fields"] = raw_fields
                 st.success("PDF read. Review and complete the fields below, then generate.")
             except Exception as e:
                 st.error(f"Could not read PDF: {e}")
                 raise
+
+    if "imp_raw_fields" in st.session_state and st.session_state["imp_raw_fields"]:
+        with st.expander("Raw PDF field names (use these to fix mapping if fields are wrong)", expanded=False):
+            st.caption("These are the exact field names and values pypdf found in your PDF.")
+            raw = st.session_state["imp_raw_fields"]
+            filled = {k: v for k, v in raw.items() if v}
+            empty = {k: v for k, v in raw.items() if not v}
+            if filled:
+                st.markdown("**Filled fields:**")
+                st.json(filled)
+            if empty:
+                st.markdown(f"**Empty fields ({len(empty)}):** " + ", ".join(f"`{k}`" for k in sorted(empty)))
 
     if "imp_payload" in st.session_state:
         payload_imp = st.session_state["imp_payload"]
