@@ -1,8 +1,9 @@
 """WSDOT/OFM travel rates and object code rules.
 
-Meal tiers and per-meal amounts verified against OFM FY2027 color map
-(effective 2026-10-01).  POV mileage rate ($0.760) confirmed same.
-Update each October when OFM publishes the new per diem color map.
+Rates verified against the OFM per diem colormap, revised 2026-10-01.
+POV mileage: $0.725/mi (Directive 26A-01, effective 2026-01-01) through 2026-06-30,
+then $0.76/mi effective 2026-07-01.
+Update the rate block each January when OFM publishes the new figures.
 """
 
 from __future__ import annotations
@@ -11,15 +12,36 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 # ---------------------------------------------------------------------------
-# POV mileage rates (Directive 26A-01, effective 2026-01-01)
+# POV mileage rates
+# $0.725/mi (Directive 26A-01) effective 2026-01-01 through 2026-06-30,
+# then $0.76/mi effective 2026-07-01 (OFM per diem map rev. 10/1/2026).
 # ---------------------------------------------------------------------------
-POV_FULL_RATE = 0.760       # GC01 – full POV rate (no state vehicle available)
+POV_FULL_RATE = 0.760       # GC01 – full POV rate (no state vehicle available), current
+POV_FULL_RATE_PRE_JULY2026 = 0.725  # GC01 – full POV rate for trips departing before 2026-07-01
 POV_ELECTIVE_RATE = 0.235   # GC02 – elective POV rate (state vehicle was available)
 MOTORCYCLE_RATE = 0.740     # privately owned motorcycle rate
 AIRCRAFT_RATE = 1.935       # privately owned aircraft, per statute mile
 
+
+def pov_full_rate_on(departure) -> float:
+    """Return the GC01 full POV rate in effect on the departure date.
+
+    departure: a datetime.date, or "YYYY-MM-DD" string.
+    """
+    from datetime import date as _date
+    if isinstance(departure, str):
+        departure = _date.fromisoformat(departure)
+    return POV_FULL_RATE_PRE_JULY2026 if departure < _date(2026, 7, 1) else POV_FULL_RATE
+
+
+def mileage_rate_on(departure, state_vehicle_available: bool) -> float:
+    """Date-aware mileage rate: elective GC02 or full GC01 for the departure date."""
+    if state_vehicle_available:
+        return POV_ELECTIVE_RATE
+    return pov_full_rate_on(departure)
+
 # ---------------------------------------------------------------------------
-# In-state meal tiers (OFM FY2026)
+# In-state meal tiers (OFM per diem map, revised 2026-10-01)
 # Splits: B=breakfast, L=lunch, D=dinner
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)

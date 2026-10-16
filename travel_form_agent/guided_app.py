@@ -713,12 +713,8 @@ with tab_guided:
 with tab_import:
     st.subheader("Import Documents")
     st.write(
-        "Upload your **approved travel request** and any receipts. "
-        "Claude will read the documents and pre-fill the expense voucher for you."
-    )
-    st.info(
-        "Accepted formats: PDF, JPG, PNG. "
-        "The travel request PDF is required; receipts are optional."
+        "Upload your **approved travel request PDF** to pre-fill the expense voucher. "
+        "Then add any receipts (hotel, parking, etc.) manually below."
     )
 
     imp_travel_req = st.file_uploader(
@@ -726,82 +722,201 @@ with tab_import:
         type=["pdf"],
         key="imp_travel_req",
     )
-    imp_hotel = st.file_uploader(
-        "Hotel folio / receipt (optional)",
-        type=["pdf", "jpg", "jpeg", "png"],
-        key="imp_hotel",
-    )
-    imp_other_receipts = st.file_uploader(
-        "Other receipts – parking, airfare, registration, etc. (optional, multi-select)",
-        type=["pdf", "jpg", "jpeg", "png"],
-        accept_multiple_files=True,
-        key="imp_other",
-    )
 
-    if st.button("Extract from documents", type="primary", key="imp_extract"):
+    if st.button("Read travel request", type="primary", key="imp_extract"):
         if imp_travel_req is None:
             st.error("Upload the approved travel request PDF first.")
         else:
             try:
-                from travel_agent.extract import (
-                    extract_hotel_folio,
-                    extract_receipt,
-                    extract_travel_request,
-                    merge_into_intake,
-                )
-
-                with st.spinner("Reading travel request…"):
-                    tr_data = extract_travel_request(
-                        imp_travel_req.getvalue(), imp_travel_req.name
-                    )
-
-                hotel_data = None
-                if imp_hotel is not None:
-                    with st.spinner("Reading hotel folio…"):
-                        hotel_data = extract_hotel_folio(
-                            imp_hotel.getvalue(), imp_hotel.name
-                        )
-
-                receipts = []
-                for r_file in (imp_other_receipts or []):
-                    with st.spinner(f"Reading {r_file.name}…"):
-                        receipts.append(
-                            extract_receipt(r_file.getvalue(), r_file.name)
-                        )
-
-                merged = merge_into_intake(tr_data, hotel_data, receipts)
-                st.session_state["imp_payload"] = merged
-                st.success("Extraction complete. Review the data below, then generate.")
-
+                from travel_agent.extract import dump_raw_fields, extract_travel_request
+                file_bytes = imp_travel_req.getvalue()
+                with st.spinner("Reading PDF fields…"):
+                    raw_fields = dump_raw_fields(file_bytes)
+                    tr_data = extract_travel_request(file_bytes, imp_travel_req.name)
+                st.session_state["imp_payload"] = tr_data
+                st.session_state["imp_raw_fields"] = raw_fields
+                st.success("PDF read. Review and complete the fields below, then generate.")
             except Exception as e:
-                st.error(f"Extraction failed: {e}")
+                st.error(f"Could not read PDF: {e}")
                 raise
+
+    if "imp_raw_fields" in st.session_state and st.session_state["imp_raw_fields"]:
+        with st.expander("Raw PDF field names (use these to fix mapping if fields are wrong)", expanded=False):
+            st.caption("These are the exact field names and values pypdf found in your PDF.")
+            raw = st.session_state["imp_raw_fields"]
+            filled = {k: v for k, v in raw.items() if v}
+            empty = {k: v for k, v in raw.items() if not v}
+            if filled:
+                st.markdown("**Filled fields:**")
+                st.json(filled)
+            if empty:
+                st.markdown(f"**Empty fields ({len(empty)}):** " + ", ".join(f"`{k}`" for k in sorted(empty)))
 
     if "imp_payload" in st.session_state:
         payload_imp = st.session_state["imp_payload"]
+        t = payload_imp.get("traveler", {})
 
-        with st.expander("Review extracted data", expanded=True):
-            st.json(payload_imp)
-            st.caption(
-                "If anything looks wrong, edit the JSON directly below and click Update."
-            )
-            edited_json = st.text_area(
-                "Edit JSON (optional)",
-                value=json.dumps(payload_imp, indent=2, default=str),
-                height=320,
-                key="imp_edit_json",
-            )
-            if st.button("Update from edited JSON", key="imp_update"):
-                try:
-                    st.session_state["imp_payload"] = json.loads(edited_json)
-                    st.success("Updated.")
-                    st.rerun()
-                except json.JSONDecodeError as exc:
-                    st.error(f"Invalid JSON: {exc}")
+        st.markdown("---")
+        st.markdown("### Traveler info")
+        ic1, ic2 = st.columns(2)
+        imp_name       = ic1.text_input("Name", value=t.get("name", ""), key="imp_name")
+        imp_emp_id     = ic2.text_input("Employee ID", value=t.get("employee_id", ""), key="imp_emp_id")
+        ic3, ic4 = st.columns(2)
+        imp_station    = ic3.text_input("Official station", value=t.get("official_station", ""), key="imp_station")
+        imp_residence  = ic4.text_input("Official residence", value=t.get("official_residence", ""), key="imp_residence")
+
+        st.markdown("### Trip details")
+        ic5, ic6 = st.columns(2)
+        imp_event      = ic5.text_input("Event title", value=payload_imp.get("event_title", ""), key="imp_event")
+        imp_dest       = ic6.text_input("Destination city", value=payload_imp.get("destination_city", ""), key="imp_dest")
+        ic7, ic8 = st.columns(2)
+        imp_depart     = ic7.text_input("Departure datetime", value=payload_imp.get("departure_datetime", ""), key="imp_depart", placeholder="04/21/26 0600")
+        imp_return     = ic8.text_input("Return datetime", value=payload_imp.get("return_datetime", ""), key="imp_return", placeholder="04/21/26 1800")
+        imp_remarks    = st.text_area("Remarks", value=payload_imp.get("remarks", payload_imp.get("comments", "")), key="imp_remarks")
+
+        st.markdown("### Charge codes")
+        st.caption("Enter the charge code fields. Object code is set per expense type.")
+        imp_acc = (payload_imp.get("account_codes") or [{}])[0]
+        ss = st.session_state
+        def _acc_val(pdf_key, profile_key):
+            """PDF extraction first, then saved profile, then blank."""
+            return imp_acc.get(pdf_key) or ss.get(profile_key, "")
+
+        ia1, ia2, ia3 = st.columns(3)
+        imp_program    = ia1.text_input("Program",    value=_acc_val("program",       "p_program"),    key="imp_program")
+        imp_work_order = ia2.text_input("Task Order", value=_acc_val("work_order",    "p_work_order"), key="imp_work_order")
+        imp_fund       = ia3.text_input("Fund",       value=_acc_val("fund",          "p_fund"),       key="imp_fund")
+        ia4, ia5, ia6 = st.columns(3)
+        imp_org        = ia4.text_input("Dept",       value=imp_acc.get("org_code") or t.get("org_code") or ss.get("p_org_code", ""), key="imp_org")
+        imp_unit       = ia5.text_input("Unit",       value=_acc_val("unit",          "p_unit"),       key="imp_unit")
+        imp_subunit    = ia6.text_input("Sub Unit",   value=_acc_val("subunit",       "p_subunit"),    key="imp_subunit")
+        ia7, ia8, ia9 = st.columns(3)
+        imp_activity   = ia7.text_input("Activity",   value=_acc_val("activity",      "p_activity"),   key="imp_activity")
+        imp_function   = ia8.text_input("Function",   value=_acc_val("function",      "p_function"),   key="imp_function")
+        imp_appr_unit  = ia9.text_input("Appr Unit",  value=_acc_val("appropriation", "p_appr_unit"),  key="imp_appr_unit")
+
+        st.markdown("### Receipts / expense lines")
+        st.caption("Upload receipts to auto-fill fields, or enter manually. Object codes are assigned automatically.")
+
+        # OCR receipt upload
+        imp_receipts_upload = st.file_uploader(
+            "Upload receipts (PDF, JPG, PNG) — optional, scans each for vendor/date/amount",
+            type=["pdf", "jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="imp_receipts_upload",
+        )
+        if imp_receipts_upload and st.button("Scan receipts with OCR", key="imp_ocr"):
+            from travel_agent.ocr_receipt import extract_receipt_from_file
+            scanned = []
+            for f in imp_receipts_upload:
+                with st.spinner(f"Scanning {f.name}…"):
+                    try:
+                        result = extract_receipt_from_file(f.getvalue(), f.name)
+                        result["_filename"] = f.name
+                        scanned.append(result)
+                        st.success(f"{f.name}: {result.get('vendor','')} | {result.get('date','')} | ${result.get('amount',0):.2f}")
+                    except Exception as e:
+                        st.warning(f"{f.name}: OCR failed ({e}), fill in manually.")
+                        scanned.append({"vendor": "", "date": "", "amount": 0.0, "_filename": f.name})
+            st.session_state["imp_scanned_receipts"] = scanned
+
+        scanned_defaults = st.session_state.get("imp_scanned_receipts", [])
+        num_receipts = st.number_input(
+            "Number of expense lines",
+            min_value=max(1, len(scanned_defaults)),
+            max_value=10,
+            value=max(1, len(scanned_defaults)),
+            key="imp_num_r",
+        )
+        receipt_rows = []
+        for ri in range(int(num_receipts)):
+            default = scanned_defaults[ri] if ri < len(scanned_defaults) else {}
+            label = f"Expense {ri + 1}" + (f" – {default.get('_filename','')}" if default.get("_filename") else "")
+            with st.expander(label, expanded=(ri == 0)):
+                rc1, rc2, rc3 = st.columns(3)
+                r_date    = rc1.text_input("Date (YYYY-MM-DD)", value=default.get("date", ""),   key=f"ir_date_{ri}")
+                r_paid_to = rc2.text_input("Paid to / vendor",  value=default.get("vendor", ""), key=f"ir_vendor_{ri}")
+                r_desc    = rc3.text_input("For what",          value="",                         key=f"ir_desc_{ri}")
+                rc4, rc5 = st.columns(2)
+                r_amt     = rc4.number_input("Amount ($)", min_value=0.0, step=0.01,
+                                             value=float(default.get("amount", 0) or 0),
+                                             key=f"ir_amt_{ri}")
+                r_type    = rc5.selectbox(
+                    "Expense type",
+                    ["registration", "lodging", "airfare", "parking", "taxi",
+                     "rideshare", "ferry", "toll", "bus", "rail", "other"],
+                    key=f"ir_type_{ri}",
+                )
+                if default.get("raw_text"):
+                    with st.expander("OCR raw text", expanded=False):
+                        st.text(default["raw_text"])
+                if r_amt > 0:
+                    receipt_rows.append({
+                        "date": r_date,
+                        "paid_to": r_paid_to,
+                        "for_what": r_desc or r_type,
+                        "amount": r_amt,
+                        "_type": r_type,
+                    })
 
         if st.button("Generate expense voucher", type="primary", key="imp_gen"):
             try:
-                final_payload = st.session_state["imp_payload"]
+                from travel_agent.extract import merge_receipts
+                from travel_agent.rates import (
+                    mileage_object_code, other_travel_object_code,
+                    registration_object_code, subsistence_object_code,
+                )
+
+                base_acct = {
+                    "program":       imp_program,
+                    "work_order":    imp_work_order,
+                    "fund":          imp_fund,
+                    "org_code":      imp_org,
+                    "unit":          imp_unit,
+                    "subunit":       imp_subunit,
+                    "activity":      imp_activity,
+                    "function":      imp_function,
+                    "appropriation": imp_appr_unit or imp_acc.get("appropriation", ""),
+                    "bal_sheet":     imp_acc.get("bal_sheet", ss.get("p_bal_sheet", "")),
+                }
+
+                # Build account_codes from receipt rows
+                account_codes = []
+                other_expenses = []
+                for row in receipt_rows:
+                    exp_type = row.pop("_type", "other")
+                    if exp_type == "registration":
+                        obj = registration_object_code("conference")
+                    elif exp_type in ("lodging",):
+                        obj = "GA01"
+                    elif exp_type == "airfare":
+                        obj = "GB01"
+                    else:
+                        obj = other_travel_object_code(exp_type)
+                    account_codes.append({**base_acct, "object_code": obj, "amount": row["amount"]})
+                    other_expenses.append(row)
+
+                final_payload = {
+                    **payload_imp,
+                    "traveler": {
+                        **t,
+                        "name": imp_name,
+                        "name_last_first_initial": _name_last_first(imp_name),
+                        "employee_id": imp_emp_id,
+                        "official_station": imp_station,
+                        "official_residence": imp_residence,
+                        "regular_work_hours": t.get("regular_work_hours", "M-F 0800-1700"),
+                    },
+                    "event_title":        imp_event,
+                    "destination_city":   imp_dest,
+                    "departure_datetime": imp_depart,
+                    "return_datetime":    imp_return,
+                    "remarks":            imp_remarks,
+                    "account_codes":      account_codes,
+                    "other_expenses":     other_expenses,
+                    "daily_expenses":     payload_imp.get("daily_expenses", []),
+                }
+
                 intake = TravelIntake.from_dict(final_payload)
                 with tempfile.TemporaryDirectory() as td:
                     td_path = Path(td)
@@ -818,9 +933,8 @@ with tab_import:
                     pdf_bytes = outputs["travel_request_pdf"].read_bytes()
                     xlsx_bytes = outputs["expense_voucher_xlsx"].read_bytes()
 
-                title = final_payload.get("event_title", "expense")
-                safe = "".join(c if c.isalnum() else "_" for c in title)[:40]
-                st.success(f"Forms generated for **{title}**.")
+                safe = "".join(c if c.isalnum() else "_" for c in imp_event)[:40]
+                st.success(f"Forms generated for **{imp_event}**.")
                 dl1, dl2 = st.columns(2)
                 dl1.download_button(
                     "Download Travel Request PDF",
