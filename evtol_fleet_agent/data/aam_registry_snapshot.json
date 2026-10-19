@@ -1,7 +1,7 @@
 {
-  "registryDate": "2026-10-09",
+  "registryDate": "2026-10-16",
   "source": "https://registry.faa.gov/database/ReleasableAircraft.zip",
-  "downloadedAt": "2026-10-12T21:31:07.419933+00:00",
+  "downloadedAt": "2026-10-19T18:57:21.460132+00:00",
   "fleet": [
     {
       "registration": "N301AX",
