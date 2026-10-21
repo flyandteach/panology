@@ -141,8 +141,8 @@ class TravelIntake:
     destination_city: str
     departure_datetime: str
     return_datetime: str
-    meeting_begin_datetime: str
-    meeting_end_datetime: str
+    meeting_begin_datetime: str = ""
+    meeting_end_datetime: str = ""
     payment_methods: List[str] = field(default_factory=list)
     other_payment_method_description: Optional[str] = None
     registration_fee: float = 0.0

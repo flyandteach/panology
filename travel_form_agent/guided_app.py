@@ -772,6 +772,9 @@ with tab_import:
         ic7, ic8 = st.columns(2)
         imp_depart     = ic7.text_input("Departure datetime", value=payload_imp.get("departure_datetime", ""), key="imp_depart", placeholder="04/21/26 0600")
         imp_return     = ic8.text_input("Return datetime", value=payload_imp.get("return_datetime", ""), key="imp_return", placeholder="04/21/26 1800")
+        ic9, ic10 = st.columns(2)
+        imp_meet_begin = ic9.text_input("Meeting / event begins", value=payload_imp.get("meeting_begin_datetime", ""), key="imp_meet_begin", placeholder="04/21/26 0900")
+        imp_meet_end   = ic10.text_input("Meeting / event ends",  value=payload_imp.get("meeting_end_datetime", ""),   key="imp_meet_end",   placeholder="04/23/26 1700")
         imp_remarks    = st.text_area("Remarks", value=payload_imp.get("remarks", payload_imp.get("comments", "")), key="imp_remarks")
 
         st.markdown("### Charge codes")
@@ -935,11 +938,13 @@ with tab_import:
                         "official_residence": imp_residence,
                         "regular_work_hours": t.get("regular_work_hours", "M-F 0800-1700"),
                     },
-                    "event_title":        imp_event,
-                    "destination_city":   imp_dest,
-                    "departure_datetime": imp_depart,
-                    "return_datetime":    imp_return,
-                    "remarks":            imp_remarks,
+                    "event_title":             imp_event,
+                    "destination_city":        imp_dest,
+                    "departure_datetime":      imp_depart,
+                    "return_datetime":         imp_return,
+                    "meeting_begin_datetime":  imp_meet_begin,
+                    "meeting_end_datetime":    imp_meet_end,
+                    "remarks":                 imp_remarks,
                     "account_codes":      account_codes,
                     "other_expenses":     other_expenses,
                     "daily_expenses":     payload_imp.get("daily_expenses", []),
