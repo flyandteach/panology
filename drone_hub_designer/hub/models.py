@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field, fields
 @dataclass
 class AircraftProfile:
     name: str = "Generic small multirotor (placeholder)"
+    reference_id: str = "generic"  # key into hub.aircraft_library.LIBRARY
     span_m: float = 1.5  # largest horizontal dimension, rotor tip to rotor tip
     cruise_speed_mps: float = 25.0
     max_range_km: float = 20.0  # round-trip range on one pack, with reserve already removed
@@ -31,6 +32,13 @@ class AircraftProfile:
     max_wind_mps: float = 12.0  # operating limit, informational
     precip_capable: bool = False  # can the aircraft fly in rain / snow
     night_capable: bool = True
+    cruise_altitude_m: float = 50.0
+    vertical_climb_m: float = 15.0  # straight-up climb before moving off the pad
+    climb_rate_mps: float = 3.0
+    climb_ground_speed_mps: float = 8.0  # horizontal speed while climbing to cruise
+    launch_infrastructure: str = "ground pad"  # informational: "charging pad", "dock", ...
+    delivery_method: str = "unspecified"  # informational
+    receptor_setback_m: float = 0.0  # minimum distance to noise-sensitive areas from FAA EAs; 0 = none known
 
 
 @dataclass
@@ -87,11 +95,71 @@ class DesignRequirements:
 
 
 @dataclass
+class Obstacle:
+    name: str
+    bearing_deg: float  # compass bearing from the hub centre
+    distance_m: float
+    height_m: float  # above hub ground level
+    width_m: float = 10.0
+
+
+@dataclass
+class SensitiveZone:
+    name: str
+    kind: str  # "people", "residential", "school", "road", ...
+    bearing_from_deg: float  # sector, clockwise from this bearing...
+    bearing_to_deg: float  # ...to this one
+    inner_m: float
+    outer_m: float
+    min_overflight_m: float  # aircraft should be at least this high over the zone
+
+
+def _default_obstacles() -> list[Obstacle]:
+    return [
+        Obstacle("Store building", 180.0, 80.0, 10.0, 100.0),
+        Obstacle("Parking-lot light poles", 240.0, 50.0, 12.0, 30.0),
+        Obstacle("Tree line", 90.0, 90.0, 18.0, 60.0),
+    ]
+
+
+def _default_zones() -> list[SensitiveZone]:
+    return [
+        SensitiveZone("Parking lot and store entrance", "people", 120.0, 250.0, 0.0, 150.0, 30.0),
+        SensitiveZone("Residential neighbourhood", "residential", 20.0, 110.0, 120.0, 2000.0, 45.0),
+    ]
+
+
+@dataclass
+class AirspaceProfile:
+    """The hub's surroundings, for laying out departure and arrival corridors.
+
+    Bearings are compass degrees from the hub centre (0 = north, 90 = east).
+    All defaults are an invented example site, not real data.
+    """
+
+    store_bearing_deg: float = 180.0  # direction from the hub to the store
+    obstacles: list[Obstacle] = field(default_factory=_default_obstacles)
+    zones: list[SensitiveZone] = field(default_factory=_default_zones)
+    obstacle_clearance_m: float = 10.0  # vertical margin over obstacles (design choice)
+    corridor_half_width_m: float = 15.0
+    min_corridor_separation_deg: float = 30.0
+    min_corridors: int = 2
+    movement_spacing_s: float = 30.0  # minimum time between aircraft in the same corridor
+    max_corridor_utilization: float = 0.6
+    heading_step_deg: float = 5.0
+
+    def __post_init__(self):
+        self.obstacles = [o if isinstance(o, Obstacle) else Obstacle(**o) for o in self.obstacles]
+        self.zones = [z if isinstance(z, SensitiveZone) else SensitiveZone(**z) for z in self.zones]
+
+
+@dataclass
 class HubInputs:
     aircraft: AircraftProfile = field(default_factory=AircraftProfile)
     demand: DemandProfile = field(default_factory=DemandProfile)
     site: SiteProfile = field(default_factory=SiteProfile)
     design: DesignRequirements = field(default_factory=DesignRequirements)
+    airspace: AirspaceProfile = field(default_factory=AirspaceProfile)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -105,11 +173,23 @@ class HubInputs:
                 raise ValueError(f"Unknown {dc.__name__} fields: {sorted(unknown)}")
             return dc(**values)
 
+        aircraft = dict(data.get("aircraft", {}))
+        ref = aircraft.get("reference_id")
+        if ref:
+            # Fields not given explicitly come from the reference aircraft.
+            from .aircraft_library import LIBRARY, profile_for
+
+            if ref not in LIBRARY:
+                raise ValueError(f"Unknown reference aircraft {ref!r}; choose from {sorted(LIBRARY)}")
+            build(AircraftProfile, aircraft)  # validate field names
+            aircraft = asdict(profile_for(ref, **{k: v for k, v in aircraft.items() if k != "reference_id"}))
+
         return cls(
-            aircraft=build(AircraftProfile, data.get("aircraft", {})),
+            aircraft=build(AircraftProfile, aircraft),
             demand=build(DemandProfile, data.get("demand", {})),
             site=build(SiteProfile, data.get("site", {})),
             design=build(DesignRequirements, data.get("design", {})),
+            airspace=build(AirspaceProfile, data.get("airspace", {})),
         )
 
 

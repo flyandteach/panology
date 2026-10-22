@@ -46,6 +46,8 @@ class Layout:
     barrier: bool
     barrier_to_pad_m: float  # fence/barrier to the centre of the nearest pad
     rects: list[Rect] = field(default_factory=list)
+    corridor_headings: list[float] = field(default_factory=list)  # degrees clockwise from "away from store"
+    pad_label: str = "Pad"
 
     def get(self, name: str) -> Rect:
         return next(r for r in self.rects if r.name == name)
@@ -159,7 +161,7 @@ def render_svg(layout: Layout, px_per_m: float = 8.0) -> str:
         out.append(
             f'<rect x="{sx(r.x):.1f}" y="{sy(r.y2):.1f}" width="{r.w * px_per_m:.1f}" '
             f'height="{r.h * px_per_m:.1f}" fill="{fill}" stroke="#333" stroke-width="0.8">'
-            f"<title>{escape(r.name)}</title></rect>"
+            f"<title>{escape(r.name.replace('Pad', layout.pad_label))}</title></rect>"
         )
         if r.kind == "pad":
             out.append(
@@ -184,13 +186,17 @@ def render_svg(layout: Layout, px_per_m: float = 8.0) -> str:
             f'height="{apron.h * px_per_m:.1f}" fill="none" stroke="#555" stroke-dasharray="4 3"/>'
         )
 
-    # Approach / departure direction: away from the store, over the airside fence.
+    # Departure / arrival corridors from the apron centre; straight away from the store if none given.
     cx = sx(apron.x + apron.w / 2)
-    top = sy(apron.y2)
-    out.append(
-        f'<line x1="{cx:.1f}" y1="{top + 12:.1f}" x2="{cx:.1f}" y2="{max(top - 22, 4):.1f}" '
-        f'stroke="#6a1b9a" stroke-width="2" marker-end="url(#arrow)"/>'
-    )
+    cy = sy(apron.y + apron.h / 2)
+    reach = max(apron.w, apron.h) / 2 * px_per_m + 20
+    for rel in layout.corridor_headings or [0.0]:
+        t = math.radians(rel)
+        x2, y2 = cx + reach * math.sin(t), cy - reach * math.cos(t)
+        out.append(
+            f'<line x1="{cx:.1f}" y1="{cy:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
+            f'stroke="#6a1b9a" stroke-width="2" marker-end="url(#arrow)"/>'
+        )
     out.insert(
         1,
         '<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">'
@@ -204,7 +210,7 @@ def render_svg(layout: Layout, px_per_m: float = 8.0) -> str:
         f'stroke-dasharray="8 4"><title>Available site</title></rect>'
     )
     out.append(f'<text x="{margin:.0f}" y="{h - 24:.0f}" fill="#111">Store / parking side at bottom. '
-               f'Purple arrow: departure / approach direction.</text>')
+               f'Purple arrows: departure / arrival corridors.</text>')
     out.append(f'<text x="{margin:.0f}" y="{h - 8:.0f}" fill="#111">Green line: noise barrier. '
                f'Dashed outline: available site (red if the hub does not fit).</text>')
     out.append("</svg>")

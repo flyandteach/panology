@@ -112,3 +112,126 @@ def test_summary_is_json_serialisable():
     import json
 
     json.dumps(evaluate(HubInputs()).summary())
+
+
+# --- reference aircraft ---------------------------------------------------
+
+from hub.aircraft_library import LIBRARY, facts, profile_for, provenance  # noqa: E402
+from hub.models import AircraftProfile, AirspaceProfile, Obstacle, SensitiveZone  # noqa: E402
+from hub.sources import SOURCES  # noqa: E402
+
+
+def test_every_library_source_is_registered():
+    for entry in LIBRARY.values():
+        for _, srcs, _ in entry["values"].values():
+            assert all(s in SOURCES for s in srcs)
+        for _, _, srcs in entry["facts"]:
+            assert all(s in SOURCES for s in srcs)
+
+
+def test_every_library_field_exists_on_profile():
+    names = {f for f in AircraftProfile.__dataclass_fields__}
+    for entry in LIBRARY.values():
+        assert set(entry["values"]) <= names
+
+
+def test_reference_values_convert_units():
+    p = profile_for("zipline_p2")
+    assert p.cruise_altitude_m == pytest.approx(330 * 0.3048)
+    assert p.max_range_km == pytest.approx(2 * 10 * 1.609344)
+    assert p.battery_mode == "onboard"
+
+
+def test_provenance_marks_placeholders_and_overrides():
+    rows = {r["field"]: r for r in provenance("zipline_p2", profile_for("zipline_p2", cruise_speed_mps=20.0))}
+    assert rows["span_m"]["basis"] == "placeholder"
+    assert rows["cruise_speed_mps"]["basis"] == "user input"
+    assert rows["max_range_km"]["confidence"] == "2+ sources"
+    assert facts("amazon_mk30")
+
+
+def test_reference_id_in_inputs_fills_and_overrides():
+    i = HubInputs.from_dict({"aircraft": {"reference_id": "amazon_mk30", "span_m": 2.0}})
+    assert i.aircraft.span_m == 2.0
+    assert i.aircraft.hover_noise_dba == 70.0
+    with pytest.raises(ValueError):
+        HubInputs.from_dict({"aircraft": {"reference_id": "no_such_drone"}})
+
+
+# --- flight paths -----------------------------------------------------------
+
+from hub.flightpath import (  # noqa: E402
+    altitude_at, assess_heading, mean_detour_m, plan_flight_paths, transition_distance_m,
+)
+
+
+def _ac(**kw):
+    base = dict(cruise_altitude_m=50, vertical_climb_m=10, climb_rate_mps=2, climb_ground_speed_mps=10)
+    base.update(kw)
+    return AircraftProfile(**base)
+
+
+def test_climb_profile():
+    ac = _ac()
+    assert altitude_at(0, ac) == 10
+    assert altitude_at(100, ac) == pytest.approx(30)
+    assert altitude_at(1000, ac) == 50
+    assert transition_distance_m(ac) == pytest.approx(200)
+
+
+def test_obstacle_in_lane_blocks_only_that_heading():
+    air = AirspaceProfile(obstacles=[Obstacle("Tower", 90, 50, 40, 5)], zones=[], obstacle_clearance_m=5)
+    ac = _ac()
+    assert not assess_heading(90, ac, air).clear  # 20 m altitude at 50 m < 45 m needed
+    assert assess_heading(270, ac, air).clear
+    assert assess_heading(0, ac, air).clear
+
+
+def test_low_overflight_counted_inside_sector_only():
+    zone = SensitiveZone("Homes", "residential", 80, 100, 0, 100, 40)
+    air = AirspaceProfile(obstacles=[], zones=[zone])
+    ac = _ac()
+    inside = assess_heading(90, ac, air).low_overflight_m["Homes"]
+    assert inside == pytest.approx(100, abs=5)  # below 40 m until x = 150 m, zone ends at 100 m
+    assert assess_heading(270, ac, air).low_overflight_m == {}
+
+
+def test_sector_wraps_through_north():
+    zone = SensitiveZone("North", "people", 350, 10, 0, 500, 1000)
+    air = AirspaceProfile(obstacles=[], zones=[zone])
+    assert assess_heading(0, _ac(), air).low_overflight_m
+    assert not assess_heading(180, _ac(), air).low_overflight_m
+
+
+def test_more_corridors_reduce_detour():
+    one = mean_detour_m([0], 200, 5000)
+    four = mean_detour_m([0, 90, 180, 270], 200, 5000)
+    assert four < one
+    assert four > 0
+
+
+def test_planner_avoids_blocked_and_low_headings():
+    obstacles = [Obstacle("Store", 180, 30, 15, 80)]
+    zones = [SensitiveZone("Homes", "residential", 45, 135, 0, 300, 60)]
+    air = AirspaceProfile(obstacles=obstacles, zones=zones, min_corridors=2)
+    fp = plan_flight_paths(_ac(), air, sorties_per_hour=20, service_radius_km=5)
+    assert fp.enough_corridors
+    for c in fp.corridors:
+        assert not (135 <= c.heading_deg <= 225)
+        assert not (45 <= c.heading_deg <= 135)
+    assert fp.low_overflight_m == 0
+    assert "<svg" in fp.to_map_svg(air, _ac()) and "<svg" in fp.to_profile_svg(air, _ac())
+
+
+def test_tempo_drives_corridor_count():
+    air = AirspaceProfile(obstacles=[], zones=[], min_corridors=1, movement_spacing_s=60, max_corridor_utilization=0.5)
+    fp = plan_flight_paths(_ac(), air, sorties_per_hour=60, service_radius_km=5)
+    # 120 movements/h, 30 per corridor -> 4 corridors
+    assert fp.corridors_required == 4 and len(fp.corridors) == 4
+
+
+def test_detour_feeds_capacity():
+    d = evaluate(HubInputs())
+    assert d.flight_paths.mean_detour_m > 0
+    base = size_capacity(d.inputs.aircraft, d.inputs.demand, d.inputs.design)
+    assert d.capacity.flight_time_s > base.flight_time_s

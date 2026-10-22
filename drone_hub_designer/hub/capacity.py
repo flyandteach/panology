@@ -74,10 +74,13 @@ class CapacityResult:
     charging_kw: float
 
 
-def size_capacity(ac: AircraftProfile, demand: DemandProfile, design: DesignRequirements) -> CapacityResult:
+def size_capacity(
+    ac: AircraftProfile, demand: DemandProfile, design: DesignRequirements, extra_flight_m: float = 0.0
+) -> CapacityResult:
+    """extra_flight_m: added distance per sortie from flying fixed departure/arrival corridors."""
     sorties_h = demand.peak_orders_per_hour / max(ac.packages_per_sortie, 1)
     trip_km = mean_trip_distance_km(demand.service_radius_km)
-    flight_s = 2 * trip_km * 1000 / ac.cruise_speed_mps + ac.delivery_dwell_s + ac.climb_descent_s
+    flight_s = (2 * trip_km * 1000 + extra_flight_m) / ac.cruise_speed_mps + ac.delivery_dwell_s + ac.climb_descent_s
     range_ok = 2 * demand.service_radius_km <= ac.max_range_km
 
     charge_s = ac.charge_time_min * 60

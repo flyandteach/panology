@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, replace
 
 from .capacity import CapacityResult, size_capacity
 from .fire import FireResult, assess_fire
+from .flightpath import FlightPathResult, plan_flight_paths
 from .layout import Layout, plan_layout
 from .models import HubInputs, parking_lot_baseline
 from .noise import NoiseResult, assess_noise
@@ -42,6 +43,7 @@ class HubDesign:
     noise: NoiseResult
     fire: FireResult
     availability: AvailabilityResult
+    flight_paths: FlightPathResult
     peak_power_kw: float
     checks: list[Check]
 
@@ -64,6 +66,16 @@ class HubDesign:
             "noise": asdict(self.noise),
             "fire": asdict(self.fire),
             "availability": asdict(self.availability),
+            "flight_paths": {
+                "corridors": [asdict(c) for c in self.flight_paths.corridors],
+                "corridors_required": self.flight_paths.corridors_required,
+                "clear_headings": self.flight_paths.clear_headings,
+                "candidate_headings": self.flight_paths.candidate_headings,
+                "corridor_length_m": round(self.flight_paths.corridor_length_m, 1),
+                "mean_detour_m_per_sortie": round(self.flight_paths.mean_detour_m, 1),
+                "extra_flight_s_per_sortie": round(self.flight_paths.extra_flight_s, 1),
+                "route_warnings": self.flight_paths.route_warnings,
+            },
             "peak_power_kw": round(self.peak_power_kw, 1),
             "scores": self.scores(),
             "checks": [asdict(c) for c in self.checks],
@@ -72,7 +84,9 @@ class HubDesign:
 
 def evaluate(inputs: HubInputs) -> HubDesign:
     ac, demand, site, d = inputs.aircraft, inputs.demand, inputs.site, inputs.design
-    cap = size_capacity(ac, demand, d)
+    sorties_h = demand.peak_orders_per_hour / max(ac.packages_per_sortie, 1)
+    paths = plan_flight_paths(ac, inputs.airspace, sorties_h, demand.service_radius_km)
+    cap = size_capacity(ac, demand, d, extra_flight_m=paths.mean_detour_m)
 
     layout = plan_layout(
         site.width_m,
@@ -89,6 +103,10 @@ def evaluate(inputs: HubInputs) -> HubDesign:
         d.noise_barrier,
         "Operations building (covered loading)" if d.covered_loading else "Storage container (open-air loading)",
     )
+    # Layout's "up" points away from the store; draw corridors relative to it.
+    up = inputs.airspace.store_bearing_deg + 180.0
+    layout.corridor_headings = [(c.heading_deg - up) % 360.0 for c in paths.corridors]
+    layout.pad_label = "Dock" if ac.launch_infrastructure == "dock" else "Pad"
 
     busy_pads = max(1, math.ceil(cap.pad_events_per_hour * cap.pad_service_s / 3600))
     noise = assess_noise(
@@ -133,14 +151,33 @@ def evaluate(inputs: HubInputs) -> HubDesign:
         pad_heat_kw = cap.pads_required * layout.pad_side_m**2 * d.heated_pad_w_per_m2 / 1000
     peak_kw = cap.charging_kw + d.hvac_lighting_base_kw + pad_heat_kw
 
-    checks = _checks(inputs, cap, layout, noise, fire, avail)
-    return HubDesign(inputs, cap, layout, noise, fire, avail, peak_kw, checks)
+    checks = _checks(inputs, cap, layout, noise, fire, avail, paths)
+    return HubDesign(inputs, cap, layout, noise, fire, avail, paths, peak_kw, checks)
 
 
-def _checks(inputs, cap, layout, noise, fire, avail) -> list[Check]:
-    ac, demand, d = inputs.aircraft, inputs.demand, inputs.design
+def _checks(inputs, cap, layout, noise, fire, avail, paths) -> list[Check]:
+    ac, demand, d, site = inputs.aircraft, inputs.demand, inputs.design, inputs.site
     c = CRITERIA
-    return [
+    setback_check = []
+    if ac.receptor_setback_m > 0:
+        setback_check = [Check(
+            "Noise", "Receptor beyond FAA EA setback for this aircraft",
+            site.nearest_receptor_m >= ac.receptor_setback_m,
+            f"Nearest noise-sensitive area {site.nearest_receptor_m:.0f} m; this operator's FAA environmental "
+            f"assessments place hubs at least {ac.receptor_setback_m:.0f} m away (more in controlled airspace).",
+        )]
+    blocked = paths.candidate_headings - paths.clear_headings
+    flight_checks = [
+        Check("Flight paths", "Enough obstacle-clear corridors", paths.enough_corridors,
+              f"{len(paths.corridors)} of {paths.corridors_required} corridors placed "
+              f"({paths.movements_per_hour:.0f} movements/h, {paths.corridor_capacity_per_hour:.0f} per corridor); "
+              f"{blocked} of {paths.candidate_headings} headings blocked by obstacles."),
+        Check("Flight paths", "No low overflight of sensitive zones", paths.low_overflight_m == 0,
+              f"{paths.low_overflight_m:.0f} m of corridor below a zone's minimum overflight height."),
+        Check("Flight paths", "Cruise altitude clears every zone minimum", not paths.route_warnings,
+              " ".join(paths.route_warnings) or "All zone minimums are at or below cruise altitude."),
+    ]
+    return flight_checks + setback_check + [
         Check("Throughput", "Service radius within aircraft range", cap.range_ok,
               f"Round trip to the edge is {2 * demand.service_radius_km:.1f} km; usable range {ac.max_range_km:.1f} km."),
         Check("Throughput", "Pad wait within target", cap.pad_mean_wait_s <= d.target_pad_wait_s,
