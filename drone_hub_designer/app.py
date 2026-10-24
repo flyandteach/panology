@@ -8,7 +8,7 @@ import streamlit as st
 
 from hub import CRITERIA, HubInputs, compare_with_baseline
 from hub.aircraft_library import LIBRARY, facts, profile_for, provenance, reference_names
-from hub.models import AirspaceProfile, DemandProfile, DesignRequirements, Obstacle, SensitiveZone, SiteProfile
+from hub.models import AirspaceProfile, CostInputs, DemandProfile, DesignRequirements, Obstacle, SensitiveZone, SiteProfile
 
 st.set_page_config(page_title="Drone Delivery Hub Designer", layout="wide")
 st.title("Drone Delivery Hub Designer")
@@ -73,6 +73,11 @@ for section, title, dc in [
     with st.sidebar.expander(title, expanded=section == "demand"):
         values[section] = {f.name: widget(section, f.name, getattr(current, f.name)) for f in fields(dc)}
 
+with st.sidebar.expander("Unit costs"):
+    st.caption("Enter your own prices. Zero means not entered. Only electricity has a default "
+               "(US commercial average, Jan-Jun 2026, per EIA via a secondary source).")
+    values["costs"] = {f.name: widget("costs", f.name, getattr(base.costs, f.name)) for f in fields(CostInputs)}
+
 with st.sidebar.expander("Flight path settings"):
     air_scalars = {
         f.name: widget("airspace", f.name, getattr(base.airspace, f.name))
@@ -81,7 +86,7 @@ with st.sidebar.expander("Flight path settings"):
     }
 
 metrics_box = st.container()
-tabs = st.tabs(["Layout and scorecard", "Flight paths", "Throughput", "Noise", "Weather and night",
+tabs = st.tabs(["Layout and scorecard", "Flight paths", "Costs", "Throughput", "Noise", "Weather and night",
                 "Aircraft reference", "All checks"])
 
 with tabs[1]:
@@ -188,6 +193,34 @@ with tabs[1]:
                "terrain, or the operator's own route approvals.")
 
 with tabs[2]:
+    pc, bc = proposed.costs, baseline.costs
+    if pc.missing:
+        st.info("Unit costs not entered for: " + ", ".join(pc.missing) + ". Those lines count as zero, so the "
+                "totals below are incomplete. Enter prices under Unit costs in the sidebar.")
+
+    def money(v: float) -> str:
+        return f"${v:,.0f}" if v < 1e6 else f"${v / 1e6:,.2f}M"
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Capital", money(pc.capital_total), delta=money(pc.capital_total - bc.capital_total)
+              if pc.capital_total != bc.capital_total else None, delta_color="inverse", help="vs baseline")
+    c2.metric("Operating / yr", money(pc.operating_annual))
+    c3.metric("Deliveries / yr", f"{pc.annual_deliveries:,.0f}",
+              delta=f"{pc.annual_deliveries - bc.annual_deliveries:+,.0f}", help="Demand x availability")
+    c4.metric("Cost per delivery", f"${pc.cost_per_delivery:,.2f}",
+              delta=f"{pc.cost_per_delivery - bc.cost_per_delivery:+,.2f}", delta_color="inverse")
+    st.dataframe(pd.DataFrame([{
+        "Group": line.group, "Item": line.item, "Quantity": round(line.quantity, 1), "Unit": line.unit,
+        "Unit cost": line.unit_cost, "Total": round(line.total),
+        "Status": "" if line.entered else "not entered",
+    } for line in pc.lines]), hide_index=True, use_container_width=True)
+    st.caption(
+        "Capital is annualised with the capital recovery factor at the discount rate and asset lives entered. "
+        "Deliveries per year = daily orders x 365 x availability, so hub downtime raises cost per delivery. "
+        "Energy assumes one full pack charge per sortie. The baseline uses the same unit costs."
+    )
+
+with tabs[3]:
     st.write(
         f"{cap.sorties_per_hour:.0f} sorties/h at peak. Mean trip {cap.mean_trip_km:.1f} km each way; "
         f"flight {cap.flight_time_s / 60:.1f} min, ground turnaround {cap.ground_turnaround_s / 60:.1f} min, "
@@ -201,7 +234,7 @@ with tabs[2]:
     )
     st.write(f"Lithium-ion energy on site: {cap.stored_energy_kwh:.1f} kWh across {cap.batteries_required} packs.")
 
-with tabs[3]:
+with tabs[4]:
     n, bn = proposed.noise, baseline.noise
     st.write(
         f"Proposed: {n.level_with_barrier_db:.1f} dBA at the nearest receptor "
@@ -215,7 +248,7 @@ with tabs[3]:
     st.caption("Screening estimate: point source, spherical spreading, thin-barrier approximation. "
                "Covers lift-off and landing only; overflight noise is not shielded by a barrier.")
 
-with tabs[4]:
+with tabs[5]:
     a, ba = proposed.availability, baseline.availability
     st.write(
         f"Aircraft limits (wind, precipitation, night) remove {a.aircraft_limited_frac:.1%} of operating hours "
@@ -226,7 +259,7 @@ with tabs[4]:
     if ba.causes:
         st.table(pd.DataFrame({"Share of operating hours": {k: f"{v:.1%}" for k, v in ba.causes.items()}}))
 
-with tabs[5]:
+with tabs[6]:
     st.subheader(LIBRARY[ref_id]["name"])
     st.caption("Figures were taken from web search excerpts of the documents linked; they were not checked "
                "against the full documents. 'single source' and 'unverified' values deserve a second look.")
@@ -241,7 +274,7 @@ with tabs[5]:
         st.dataframe(pd.DataFrame(fact_rows), column_config={"sources": st.column_config.ListColumn("sources")},
                      hide_index=True, use_container_width=True)
 
-with tabs[6]:
+with tabs[7]:
     check_rows = []
     for p_, b_ in zip(proposed.checks, baseline.checks):
         check_rows.append({"Category": p_.category, "Check": p_.name, "Proposed": "pass" if p_.passed else "FAIL",

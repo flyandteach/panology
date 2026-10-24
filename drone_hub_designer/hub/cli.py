@@ -41,6 +41,11 @@ def main(argv: list[str] | None = None) -> int:
           f"| peak power {proposed.peak_power_kw:.0f} kW")
     print(f"Footprint {proposed.layout.required_w:.0f} x {proposed.layout.required_d:.0f} m "
           f"({'fits' if proposed.layout.fits else 'DOES NOT FIT'} the site)")
+    costs, bcosts = proposed.costs, baseline.costs
+    print(f"Capital ${costs.capital_total:,.0f} | operating ${costs.operating_annual:,.0f}/yr | "
+          f"${costs.cost_per_delivery:,.2f} per delivery (baseline ${bcosts.cost_per_delivery:,.2f})")
+    if costs.missing:
+        print(f"  Unit costs not entered: {', '.join(costs.missing)}")
     print(f"\n{'Category':<12}{'Proposed':>10}{'Baseline':>10}")
     for cat, score in proposed.scores().items():
         print(f"{cat:<12}{score:>10.0%}{baseline.scores()[cat]:>10.0%}")

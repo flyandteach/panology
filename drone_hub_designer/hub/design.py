@@ -11,6 +11,7 @@ import math
 from dataclasses import asdict, dataclass, replace
 
 from .capacity import CapacityResult, size_capacity
+from .costs import CostResult, estimate_costs
 from .fire import FireResult, assess_fire
 from .flightpath import FlightPathResult, plan_flight_paths
 from .layout import Layout, plan_layout
@@ -46,6 +47,7 @@ class HubDesign:
     flight_paths: FlightPathResult
     peak_power_kw: float
     checks: list[Check]
+    costs: CostResult | None = None
 
     def scores(self) -> dict[str, float]:
         cats: dict[str, list[bool]] = {}
@@ -77,6 +79,15 @@ class HubDesign:
                 "route_warnings": self.flight_paths.route_warnings,
             },
             "peak_power_kw": round(self.peak_power_kw, 1),
+            "costs": {
+                "capital_total": round(self.costs.capital_total),
+                "annualised_capital": round(self.costs.annualised_capital),
+                "operating_annual": round(self.costs.operating_annual),
+                "annual_deliveries": round(self.costs.annual_deliveries),
+                "cost_per_delivery": round(self.costs.cost_per_delivery, 2),
+                "unit_costs_not_entered": self.costs.missing,
+                "lines": [dict(asdict(line), total=line.total) for line in self.costs.lines],
+            } if self.costs else None,
             "scores": self.scores(),
             "checks": [asdict(c) for c in self.checks],
         }
@@ -152,7 +163,9 @@ def evaluate(inputs: HubInputs) -> HubDesign:
     peak_kw = cap.charging_kw + d.hvac_lighting_base_kw + pad_heat_kw
 
     checks = _checks(inputs, cap, layout, noise, fire, avail, paths)
-    return HubDesign(inputs, cap, layout, noise, fire, avail, paths, peak_kw, checks)
+    design = HubDesign(inputs, cap, layout, noise, fire, avail, paths, peak_kw, checks)
+    design.costs = estimate_costs(design, inputs.costs)
+    return design
 
 
 def _checks(inputs, cap, layout, noise, fire, avail, paths) -> list[Check]:

@@ -235,3 +235,41 @@ def test_detour_feeds_capacity():
     assert d.flight_paths.mean_detour_m > 0
     base = size_capacity(d.inputs.aircraft, d.inputs.demand, d.inputs.design)
     assert d.capacity.flight_time_s > base.flight_time_s
+
+
+# --- costs --------------------------------------------------------------------
+
+from hub.costs import capital_recovery_factor  # noqa: E402
+from hub.models import CostInputs  # noqa: E402
+
+
+def test_capital_recovery_factor():
+    assert capital_recovery_factor(0, 10) == pytest.approx(0.1)
+    # Standard table value: 8 % over 20 years -> 0.10185
+    assert capital_recovery_factor(0.08, 20) == pytest.approx(0.10185, abs=1e-5)
+
+
+def test_missing_prices_are_reported_not_free():
+    d = evaluate(HubInputs())
+    assert "Aircraft" in d.costs.missing
+    assert d.costs.capital_total == 0
+    assert d.costs.operating_annual > 0  # electricity has a default rate
+
+
+def test_costs_scale_with_quantities():
+    costs = CostInputs(aircraft_unit_cost=1000, pad_or_dock_cost=500, discount_rate=0,
+                       aircraft_life_years=5, infrastructure_life_years=10, electricity_price_per_kwh=0)
+    d = evaluate(HubInputs(costs=costs))
+    c = d.costs
+    expected = d.capacity.aircraft_required * 1000 + d.capacity.pads_required * 500
+    assert c.capital_total == pytest.approx(expected)
+    assert c.annualised_capital == pytest.approx(d.capacity.aircraft_required * 1000 / 5
+                                                 + d.capacity.pads_required * 500 / 10)
+    assert c.cost_per_delivery == pytest.approx(c.annualised_capital / c.annual_deliveries)
+
+
+def test_baseline_has_no_barrier_or_building_lines():
+    _, baseline = compare_with_baseline(HubInputs())
+    items = {line.item for line in baseline.costs.lines}
+    assert "Noise barrier" not in items and "Operations building" not in items
+    assert "Storage container" in items

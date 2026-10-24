@@ -154,12 +154,51 @@ class AirspaceProfile:
 
 
 @dataclass
+class CostInputs:
+    """Unit costs. Zero means "not entered", not free; only the electricity rate has a default.
+
+    The electricity default is the US commercial-sector average for January-June 2026,
+    13.86 cents/kWh, from EIA Electric Power Monthly Table 5.6.B as reported by a secondary
+    source (startbusinessbystate.com); use your utility tariff instead.
+    """
+
+    aircraft_unit_cost: float = 0.0
+    battery_pack_cost: float = 0.0
+    charger_cost_per_slot: float = 0.0
+    pad_or_dock_cost: float = 0.0
+    site_work_cost_per_m2: float = 0.0
+    building_cost_per_m2: float = 0.0
+    container_cost: float = 0.0
+    battery_room_cost_per_m2: float = 0.0
+    fence_cost_per_m: float = 0.0
+    barrier_cost_per_m2: float = 0.0
+    heated_pad_cost_per_m2: float = 0.0
+    lighting_cost: float = 0.0
+    fire_suppression_cost: float = 0.0
+    battery_hvac_cost: float = 0.0
+    electrical_service_cost_per_kw: float = 0.0
+    electricity_price_per_kwh: float = 0.1386
+    demand_charge_per_kw_month: float = 0.0
+    staff_cost_per_hour: float = 0.0
+    other_staff_per_shift: int = 1  # supervisor / remote pilot on site, beyond ground crew
+    crew_utilization: float = 0.6  # share of a crew member's time spent loading / swapping
+    aircraft_maintenance_frac_per_year: float = 0.0
+    battery_cycle_life: float = 500.0  # placeholder; use the pack supplier's rating
+    charger_efficiency: float = 0.9  # placeholder
+    site_lease_per_m2_year: float = 0.0
+    discount_rate: float = 0.08  # placeholder; use your cost of capital
+    aircraft_life_years: float = 5.0  # placeholder
+    infrastructure_life_years: float = 20.0  # placeholder
+
+
+@dataclass
 class HubInputs:
     aircraft: AircraftProfile = field(default_factory=AircraftProfile)
     demand: DemandProfile = field(default_factory=DemandProfile)
     site: SiteProfile = field(default_factory=SiteProfile)
     design: DesignRequirements = field(default_factory=DesignRequirements)
     airspace: AirspaceProfile = field(default_factory=AirspaceProfile)
+    costs: CostInputs = field(default_factory=CostInputs)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -190,6 +229,7 @@ class HubInputs:
             site=build(SiteProfile, data.get("site", {})),
             design=build(DesignRequirements, data.get("design", {})),
             airspace=build(AirspaceProfile, data.get("airspace", {})),
+            costs=build(CostInputs, data.get("costs", {})),
         )
 
 

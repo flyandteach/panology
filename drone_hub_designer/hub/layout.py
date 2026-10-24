@@ -31,6 +31,10 @@ class Rect:
     def y2(self) -> float:
         return self.y + self.h
 
+    @property
+    def area(self) -> float:
+        return self.w * self.h
+
 
 @dataclass
 class Layout:
