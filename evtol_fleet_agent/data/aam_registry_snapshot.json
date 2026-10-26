@@ -1,7 +1,7 @@
 {
-  "registryDate": "2026-10-16",
+  "registryDate": "2026-10-23",
   "source": "https://registry.faa.gov/database/ReleasableAircraft.zip",
-  "downloadedAt": "2026-10-19T18:57:21.460132+00:00",
+  "downloadedAt": "2026-10-26T14:41:40.378483+00:00",
   "fleet": [
     {
       "registration": "N301AX",
@@ -442,14 +442,14 @@
       "faaManufacturer": "JOBY AERO INC",
       "model": "JAI40",
       "year": null,
-      "statusCode": "2",
+      "statusCode": "V",
       "icao24": "a7cf73",
       "certification": null,
       "aircraftTypeCode": "5",
       "engineTypeCode": "10",
-      "registrationState": null,
-      "certificateIssueDate": null,
-      "expirationDate": null
+      "registrationState": "CA",
+      "certificateIssueDate": "20261023",
+      "expirationDate": "20331031"
     },
     {
       "registration": "N4968R",
