@@ -1,7 +1,7 @@
 {
-  "registryDate": "2026-10-23",
+  "registryDate": "2026-10-30",
   "source": "https://registry.faa.gov/database/ReleasableAircraft.zip",
-  "downloadedAt": "2026-10-26T14:41:40.378483+00:00",
+  "downloadedAt": "2026-11-02T14:06:49.025844+00:00",
   "fleet": [
     {
       "registration": "N301AX",
@@ -44,7 +44,7 @@
       "year": "2025",
       "statusCode": "V",
       "icao24": "a95fc9",
-      "certification": "41",
+      "certification": "4136",
       "aircraftTypeCode": "H",
       "engineTypeCode": "10",
       "registrationState": "CA",
