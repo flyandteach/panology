@@ -449,3 +449,45 @@ def test_kml_and_geojson_export_round_trip():
     gj = js.loads(export_geojson(design, geo))
     layers = {f["properties"]["layer"] for f in gj["features"]}
     assert {"hub", "lot", "layout", "corridor", "obstacle", "zone"} <= layers
+
+
+# --- Cesium surface samples ------------------------------------------------------
+
+from hub.cesium import measure_settings, samples_to_obstacles  # noqa: E402
+from hub.geo import corridor_shapes  # noqa: E402
+
+
+def test_cesium_samples_become_obstacles_at_the_right_place():
+    payload = {"hub": list(HUB), "hub_ground_m": 120.0, "step_deg": 5, "step_m": 10, "radius_m": 200,
+               "threshold_m": 1.0, "sampled": 1440, "points": [[90, 60, 14.0], [180, 200, 3.0]]}
+    obstacles, notes = samples_to_obstacles(payload)
+    assert len(obstacles) == 2 and "1440" in notes[0]
+    d = derive_site({"version": 1, "hub": list(HUB), "store": None, "lot": None,
+                     "obstacles": obstacles, "zones": []})
+    east, south = d.airspace["obstacles"]
+    assert east["bearing_deg"] == pytest.approx(90, abs=0.1) and east["distance_m"] == pytest.approx(60, abs=0.1)
+    assert east["height_m"] == 14.0 and east["width_m"] == 10.0
+    assert south["width_m"] == pytest.approx(200 * math.radians(5), abs=0.1)  # wider than the grid step far out
+
+
+def test_measured_rise_blocks_a_corridor():
+    obstacles, _ = samples_to_obstacles({"hub": list(HUB), "step_deg": 5, "step_m": 10,
+                                         "points": [[90, 40, 35.0]]})
+    d = derive_site({"version": 1, "hub": list(HUB), "store": None, "lot": None, "obstacles": obstacles, "zones": []})
+    air = AirspaceProfile(obstacles=d.airspace["obstacles"], zones=[])
+    assert not assess_heading(90, _ac(), air).clear
+    assert assess_heading(270, _ac(), air).clear
+
+
+def test_measure_settings_cover_the_climb():
+    m = measure_settings(228.2, 5)
+    assert m["radius_m"] >= 228.2 and m["radius_m"] % 10 == 0 and m["step_deg"] == 5
+    assert measure_settings(5000, 5)["radius_m"] == 800
+
+
+def test_corridor_profile_for_3d():
+    d = evaluate(HubInputs())
+    shapes = corridor_shapes(d.flight_paths, HUB, 15, d.inputs.aircraft)
+    prof = shapes[0]["profile"]
+    assert prof[0][2] == d.inputs.aircraft.vertical_climb_m
+    assert prof[-1][2] == pytest.approx(d.inputs.aircraft.cruise_altitude_m)

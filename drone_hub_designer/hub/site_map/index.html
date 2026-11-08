@@ -19,7 +19,11 @@
   button:hover { background: var(--surface-2); }
   button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.warn { color: var(--danger); }
-  #map { height: 560px; border: 1px solid var(--line); border-radius: 8px; }
+  #map, #globe { height: 560px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  #cesium-controls { display: none; gap: 6px; align-items: center; flex-wrap: wrap; }
+  #cesium-controls input[type=password] { width: 230px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  #cesium-controls select { font: inherit; padding: 4px; border: 1px solid var(--line); border-radius: 6px; }
+  button:disabled { opacity: .5; cursor: default; }
   #status { min-height: 18px; color: var(--ink-2); padding: 4px 0; }
   #results { position: relative; }
   #results ul { position: absolute; z-index: 1000; list-style: none; margin: 0; padding: 4px 0; background: var(--surface);
@@ -43,6 +47,21 @@
   <button id="go">Search</button>
 </div>
 <div id="results"></div>
+<div class="bar">
+  <button id="v2d" class="on">2D map</button>
+  <button id="v3d" title="3D view with Cesium terrain and buildings">3D view</button>
+  <span id="cesium-controls">
+    <input id="ion-token" type="password" placeholder="Cesium ion access token" autocomplete="off"
+      title="Sent only to Cesium ion from this browser, never to the app's server">
+    <label title="Save the token in this browser (localStorage)"><input id="ion-remember" type="checkbox"> Remember</label>
+    <button id="connect">Connect</button>
+    <select id="layer3d" title="3D buildings">
+      <option value="osm">Cesium OSM Buildings + World Terrain</option>
+      <option value="google">Google Photorealistic 3D Tiles (view only)</option>
+    </select>
+    <button id="measure" title="Measure terrain and building heights around the hub and use them as obstacles">Measure heights from Cesium</button>
+  </span>
+</div>
 <div class="bar" id="tools">
   <button data-mode="hub" title="Click the map to place the hub centre; drag the pin to adjust">1 Place hub</button>
   <button data-mode="store" title="Click on the store building">2 Mark store</button>
@@ -55,6 +74,7 @@
 </div>
 <div id="form"></div>
 <div id="map"></div>
+<div id="globe" style="display:none"></div>
 <div id="status"></div>
 
 <script src="vendor/leaflet/leaflet.js"></script>
@@ -80,7 +100,7 @@ const imagery = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/service
   { maxNativeZoom: 19, maxZoom: 21, attribution: "Imagery &copy; Esri and its data providers" });
 const streets = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
   { maxNativeZoom: 19, maxZoom: 21, attribution: "&copy; OpenStreetMap contributors" });
-const map = L.map("map", { layers: [imagery], zoomControl: true }).setView([39.5, -98.35], 4);
+const map = L.map("map", { layers: [imagery], zoomControl: true, preferCanvas: true }).setView([39.5, -98.35], 4);
 L.control.layers({ "Satellite": imagery, "Streets (OpenStreetMap)": streets }, {}, { position: "topright" }).addTo(map);
 L.control.scale({ metric: true, imperial: true }).addTo(map);
 
@@ -116,7 +136,10 @@ function redraw() {
       .bindPopup(() => zonePopup(i)).addTo(edit);
   });
   state.obstacles.forEach((o, i) => {
-    L.circleMarker([o.lat, o.lon], { radius: 6, color: "#222", weight: 1.5, fillColor: "#8c8c8c", fillOpacity: .9 })
+    const sampled = String(o.source || "").startsWith("Cesium");
+    L.circleMarker([o.lat, o.lon], sampled
+      ? { radius: 3, color: "#6a1b9a", weight: 1, fillColor: "#b39ddb", fillOpacity: .9 }
+      : { radius: 6, color: "#222", weight: 1.5, fillColor: "#8c8c8c", fillOpacity: .9 })
       .bindTooltip(`${esc(o.name)} (${Number(o.height_m).toFixed(0)} m)`)
       .bindPopup(() => obstaclePopup(i)).addTo(edit);
   });
@@ -344,5 +367,6 @@ window.addEventListener("message", (event) => {
 send("streamlit:componentReady", { apiVersion: 1 });
 setHeight();
 </script>
+<script src="globe.js"></script>
 </body>
 </html>

@@ -14,6 +14,7 @@ _site_map = components.declare_component("hub_site_map", path=str(Path(__file__)
 
 
 def site_map(*, geometry: dict, overlay: dict | None, osm_query: str | None, osm_url: str,
-             min_overflight_defaults: dict, key: str):
+             min_overflight_defaults: dict, cesium_base_url: str, measure: dict, key: str):
     return _site_map(geometry=geometry, overlay=overlay, osm_query=osm_query, osm_url=osm_url,
-                     min_overflight_defaults=min_overflight_defaults, key=key, default=None)
+                     min_overflight_defaults=min_overflight_defaults, cesium_base_url=cesium_base_url,
+                     measure=measure, key=key, default=None)

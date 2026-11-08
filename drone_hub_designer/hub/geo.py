@@ -286,17 +286,29 @@ def layout_shapes(layout, hub: tuple[float, float], up_bearing_deg: float) -> li
     return shapes
 
 
-def corridor_shapes(flight_paths, hub: tuple[float, float], half_width_m: float) -> list[dict]:
+def corridor_shapes(flight_paths, hub: tuple[float, float], half_width_m: float, aircraft=None) -> list[dict]:
+    """Corridor lanes as lat/lon polygons. With the aircraft, each also carries its climb
+    profile ([lat, lon, height above the hub's ground] along the centreline) for 3D views."""
+    from .flightpath import altitude_at
+
     shapes = []
     for c in flight_paths.corridors:
         t = math.radians(c.heading_deg)
         ex, ey = c.length_m * math.sin(t), c.length_m * math.cos(t)
         px, py = half_width_m * math.cos(t), -half_width_m * math.sin(t)
         quad = [(px, py), (ex + px, ey + py), (ex - px, ey - py), (-px, -py)]
-        shapes.append({
+        shape = {
             "heading_deg": c.heading_deg,
             "length_m": c.length_m,
+            "half_width_m": half_width_m,
             "centreline": [list(hub), list(from_local(ex, ey, hub))],
             "polygon": [list(from_local(x, y, hub)) for x, y in quad],
-        })
+        }
+        if aircraft is not None:
+            n = 16
+            shape["profile"] = [
+                [*from_local(ex * i / n, ey * i / n, hub), round(altitude_at(c.length_m * i / n, aircraft), 1)]
+                for i in range(n + 1)
+            ]
+        shapes.append(shape)
     return shapes

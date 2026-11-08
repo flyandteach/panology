@@ -103,6 +103,34 @@ license.
    corridor centrelines follow the climb profile in 3D. "Save inputs" now
    includes the map, so "Load inputs" restores it.
 
+**3D view (Cesium ion).** Click **3D view** above the map and enter your
+Cesium ion access token. The token goes only from your browser to Cesium ion,
+never to this app's server, and is saved in the browser only if you tick
+**Remember**. CesiumJS 1.146.0 loads from jsDelivr. Two scenes:
+
+- **Cesium OSM Buildings + World Terrain.** **Measure heights from Cesium**
+  samples the 3D surface every 5° of bearing and every 10 m out past the end
+  of the climb (up to 800 m). Every point at least 1 m above the hub's own
+  ground becomes an obstacle. That captures rising terrain as well as
+  buildings, and it replaces earlier measurements and OSM building obstacles.
+  Building heights in this tileset come from OpenStreetMap: the height tag,
+  or 3 m per level where none is mapped
+  ([Cesium](https://cesium.com/platform/cesium-ion/content/cesium-osm-buildings/)).
+  Trees, poles and wires are not in it, so add those by hand.
+- **Google Photorealistic 3D Tiles, for viewing only.** Google's
+  [Map Tiles API policies](https://developers.google.com/maps/documentation/tile/policies)
+  prohibit data extraction, and a Google FAQ lists "geodata extraction" among
+  the uses not allowed
+  ([Google Cloud blog](https://cloud.google.com/blog/products/maps-platform/commonly-asked-questions-about-our-recently-launched-photorealistic-3d-tiles)).
+  So the Measure button is off for this scene. Cesium requires Google's
+  geocoder alongside these tiles, so the 3D view's search uses it (through
+  Cesium ion).
+
+Both scenes show the proposed layout, the sensitive areas, obstacles as
+cylinders, and each corridor as a ribbon that follows the climb profile above
+the hub's ground. That makes it easy to see a corridor passing through a
+building.
+
 **Google Earth import** (sidebar, KML or KMZ). Name the placemarks so the tool
 can sort them: a point `Hub` (or pad/site/nest) and a point `Store`; a polygon
 `Lot` (or site/parcel/boundary); points with a height in the name or
@@ -113,8 +141,9 @@ listed in a note.
 
 Search, satellite tiles and OpenStreetMap queries run in your browser. The
 server never calls them. Leaflet 1.9.4 (BSD-2-Clause) is bundled in
-`hub/site_map/vendor/leaflet/`. Not covered yet: terrain elevation, airspace
-classes and nearby airports, and local climate data.
+`hub/site_map/vendor/leaflet/`. Not covered yet: airspace classes and nearby
+airports, and local climate data. Terrain comes in only through the Cesium
+measurement.
 
 ## Use
 

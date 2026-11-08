@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from hub import CRITERIA, HubInputs, compare_with_baseline
+from hub.cesium import CESIUM_BASE_URL, measure_settings, samples_to_obstacles
 from hub.aircraft_library import LIBRARY, facts, profile_for, provenance, reference_names
 from hub.geo import corridor_shapes, derive_site, empty_geometry, layout_shapes
 from hub.kml import export_geojson, export_kml, import_kml
@@ -82,6 +83,15 @@ if osm and osm.get("data") and once(f"osm:{osm.get('request_id')}"):
     geo["zones"] = [z for z in geo["zones"] if not str(z.get("source", "")).startswith("OSM")] + zones
     replace_geometry(geo, [f"Added {len(obstacles)} obstacles and {len(zones)} sensitive areas from "
                            "OpenStreetMap (© OpenStreetMap contributors, ODbL)."] + notes)
+
+cz = sent.get("cesium")
+if cz and once(f"cesium:{cz.get('request_id')}"):
+    geo = current_geometry()
+    measured, notes = samples_to_obstacles(cz)
+    # The 3D buildings already include the OSM buildings; keep towers and hand-drawn obstacles.
+    geo["obstacles"] = [o for o in geo["obstacles"] if not str(o.get("source", "")).startswith(("Cesium", "OSM way"))]
+    geo["obstacles"] += measured
+    replace_geometry(geo, notes)
 
 geometry = current_geometry()
 use_map = False
@@ -382,7 +392,8 @@ with tabs[0]:
     st.caption(
         "Search an address or paste coordinates, then: 1 place the hub (the apron centre), 2 mark the store, "
         "3 draw the lot. Add obstacles and sensitive areas by hand, or fill them from OpenStreetMap. The proposed "
-        "layout and the chosen corridors are drawn back onto the map. Or import a Google Earth KML/KMZ in the sidebar."
+        "layout and the chosen corridors are drawn back onto the map. Or import a Google Earth KML/KMZ in the sidebar. "
+        "3D view: enter your Cesium ion token to see terrain and buildings, and to measure their heights as obstacles."
     )
     hub = tuple(geometry["hub"]) if geometry.get("hub") else None
     overlay = None
@@ -394,9 +405,11 @@ with tabs[0]:
             if _gap(up, inputs.airspace.store_bearing_deg) < 90:
                 up = (up + 180.0) % 360.0
         overlay = {"layout": layout_shapes(proposed.layout, hub, up),
-                   "corridors": corridor_shapes(fp, hub, inputs.airspace.corridor_half_width_m)}
+                   "corridors": corridor_shapes(fp, hub, inputs.airspace.corridor_half_width_m, inputs.aircraft)}
     site_map(geometry=geometry, overlay=overlay, osm_query=overpass_query(*hub) if hub else None,
-             osm_url=OVERPASS_URL, min_overflight_defaults=DEFAULT_MIN_OVERFLIGHT_M, key=MAP_KEY)
+             osm_url=OVERPASS_URL, min_overflight_defaults=DEFAULT_MIN_OVERFLIGHT_M,
+             cesium_base_url=CESIUM_BASE_URL,
+             measure=measure_settings(fp.corridor_length_m, inputs.airspace.heading_step_deg), key=MAP_KEY)
     for note in ss.geo_notes + (derived.notes if hub else []):
         st.info(note)
     if hub and use_map:
