@@ -37,8 +37,12 @@ def run_weekly(topics: dict = None, max_results_per_topic: int = None, dry_run: 
     errors = []
 
     for topic_key, topic_result in search_report.items():
-        if topic_result["blocked"]:
-            errors.append({"topic": topic_key, "stage": "search", "error": topic_result["error"]})
+        if topic_result["error"]:
+            errors.append({
+                "topic": topic_key, "stage": "search",
+                "error": topic_result["error"], "blocked": topic_result["blocked"],
+            })
+        if topic_result["blocked"] or topic_result["error"]:
             continue
 
         for result in topic_result["results"]:

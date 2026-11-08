@@ -81,8 +81,20 @@ def search_topic(topic_key: str, query: str, max_results: int = None) -> list:
 
 
 def _raise_if_blocked(exc: Exception) -> None:
+    # scholarly raises its own exception types when it can't get a response
+    # through (typically upstream CAPTCHA/rate-limiting) -- check those by
+    # class first since that's more robust than matching message text.
+    try:
+        from scholarly._proxy_generator import MaxTriesExceededException, DOSException
+        if isinstance(exc, (MaxTriesExceededException, DOSException)):
+            raise ScholarBlockedError(
+                f"Google Scholar appears to have blocked this run: {exc}"
+            ) from exc
+    except ImportError:
+        pass
+
     text = str(exc).lower()
-    markers = ("captcha", "unusual traffic", "blocked", "429", "sorry/index")
+    markers = ("captcha", "unusual traffic", "blocked", "429", "sorry/index", "cannot fetch")
     if any(m in text for m in markers):
         raise ScholarBlockedError(
             f"Google Scholar appears to have blocked this run: {exc}"
