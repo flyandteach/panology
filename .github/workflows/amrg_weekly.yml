@@ -1,0 +1,62 @@
+name: AMRG Weekly Literature Watch
+
+on:
+  schedule:
+    # Every Monday at 13:00 UTC. Cron is UTC-only; adjust for your timezone.
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  run-weekly:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: amrg_agent
+        run: |
+          pip install -r requirements.txt
+          python -m nltk.downloader cmudict
+
+      - name: Write Google service-account key
+        if: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON != '' }}
+        run: echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > "$RUNNER_TEMP/gcp-sa.json"
+
+      - name: Run weekly pipeline
+        working-directory: amrg_agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_SERVICE_ACCOUNT_FILE: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON != '' && format('{0}/gcp-sa.json', runner.temp) || '' }}
+        run: python app.py run-weekly --report-json run_report.json
+
+      - name: Upload run report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: amrg-run-report
+          path: amrg_agent/run_report.json
+          retention-days: 90
+
+      - name: Commit updated dedupe state
+        run: |
+          git config user.name "amrg-weekly-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add amrg_agent/state/seen_articles.json
+          if ! git diff --cached --quiet; then
+            git commit -m "AMRG weekly run: update seen-articles state"
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "No new articles processed; state unchanged."
+          fi

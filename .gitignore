@@ -1,4 +1,6 @@
 __pycache__/
 .venv/
-outputs/
+venv/
 *.pyc
+outputs/
+amrg_agent/output/
