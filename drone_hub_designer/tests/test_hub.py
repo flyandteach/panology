@@ -273,3 +273,179 @@ def test_baseline_has_no_barrier_or_building_lines():
     items = {line.item for line in baseline.costs.lines}
     assert "Noise barrier" not in items and "Operations building" not in items
     assert "Storage container" in items
+
+
+# --- map site: geometry, OSM, KML ---------------------------------------------
+
+from hub.geo import (  # noqa: E402
+    derive_site, from_local, layout_shapes, min_area_rectangle, polygon_sector, to_local,
+)
+from hub.kml import export_geojson, export_kml, import_kml  # noqa: E402
+from hub.osm import features_from_overpass, overpass_query, parse_height_m  # noqa: E402
+
+HUB = (35.0, -80.0)
+
+
+def _ll(x, y):
+    return list(from_local(x, y, HUB))
+
+
+def test_local_projection_round_trip_and_scale():
+    lat, lon = from_local(100.0, 200.0, HUB)
+    x, y = to_local(lat, lon, HUB)
+    assert x == pytest.approx(100.0, abs=1e-6) and y == pytest.approx(200.0, abs=1e-6)
+    # One degree of latitude is about 111.2 km on the mean-radius sphere.
+    assert to_local(HUB[0] + 1, HUB[1], HUB)[1] == pytest.approx(111_195, rel=1e-3)
+
+
+def test_min_area_rectangle_of_rotated_rectangle():
+    import math as m
+    t = m.radians(30)
+    corners = [(0, 0), (60, 0), (60, 40), (0, 40)]
+    rot = [(x * m.cos(t) - y * m.sin(t), x * m.sin(t) + y * m.cos(t)) for x, y in corners]
+    r = min_area_rectangle(rot)
+    assert sorted([r.a_m, r.b_m]) == pytest.approx([40, 60])
+
+
+def test_polygon_sector_outside_and_around_origin():
+    square = [(90, -10), (110, -10), (110, 10), (90, 10)]  # due east
+    b_from, b_to, inner, outer = polygon_sector(square)
+    assert inner == pytest.approx(90)
+    assert outer == pytest.approx((110**2 + 10**2) ** 0.5)
+    assert b_from == pytest.approx(90 - 6.34, abs=0.2) and b_to == pytest.approx(90 + 6.34, abs=0.2)
+    north = [(-10, 90), (10, 90), (10, 110), (-10, 110)]  # straddles 0 degrees
+    b_from, b_to, _, _ = polygon_sector(north)
+    assert b_from > 350 and b_to < 10
+    around = [(-5, -5), (5, -5), (5, 5), (-5, 5)]
+    assert polygon_sector(around)[:3] == (0.0, 359.99, 0.0)
+
+
+def test_derive_site_from_drawn_map():
+    geo = {
+        "version": 1, "hub": list(HUB), "store": _ll(0, -80),
+        "lot": [_ll(-35, -30), _ll(35, -30), _ll(35, 30), _ll(-35, 30)],  # 70 wide (E-W), 60 deep (N-S)
+        "obstacles": [{"name": "Pole", "lat": _ll(50, 0)[0], "lon": _ll(50, 0)[1], "height_m": 12, "width_m": 1}],
+        "zones": [{"name": "Homes", "kind": "residential", "min_overflight_m": 45,
+                   "polygon": [_ll(-50, 150), _ll(50, 150), _ll(50, 300), _ll(-50, 300)]}],
+    }
+    d = derive_site(geo)
+    assert d.airspace["store_bearing_deg"] == pytest.approx(180, abs=0.5)
+    assert d.site["width_m"] == pytest.approx(70, abs=0.5)
+    assert d.site["depth_m"] == pytest.approx(60, abs=0.5)
+    assert d.site["nearest_receptor_m"] == pytest.approx(150, abs=0.5)
+    ob = d.airspace["obstacles"][0]
+    assert ob["bearing_deg"] == pytest.approx(90, abs=0.5) and ob["distance_m"] == pytest.approx(50, abs=0.5)
+    z = d.airspace["zones"][0]
+    assert z["bearing_from_deg"] > 340 and z["bearing_to_deg"] < 20
+
+
+def test_zone_around_hub_starts_at_lot_edge():
+    lot = [_ll(-30, -20), _ll(30, -20), _ll(30, 20), _ll(-30, 20)]
+    parking = {"name": "Parking", "kind": "people", "min_overflight_m": 30,
+               "polygon": [_ll(-100, -100), _ll(100, -100), _ll(100, 100), _ll(-100, 100)]}
+    d = derive_site({"version": 1, "hub": list(HUB), "store": None, "lot": lot, "obstacles": [], "zones": [parking]})
+    z = d.airspace["zones"][0]
+    assert z["inner_m"] == pytest.approx(20, abs=0.5)  # nearest lot edge
+    assert z["bearing_to_deg"] - z["bearing_from_deg"] > 359
+
+
+def test_derived_site_runs_through_engine():
+    geo = {"version": 1, "hub": list(HUB), "store": _ll(0, -80),
+           "lot": [_ll(-40, -30), _ll(40, -30), _ll(40, 35), _ll(-40, 35)], "obstacles": [], "zones": []}
+    d = derive_site(geo)
+    data = HubInputs().to_dict()
+    data["site"].update(d.site)
+    data["airspace"].update(d.airspace)
+    design = evaluate(HubInputs.from_dict(data))
+    assert design.layout.site_w == pytest.approx(80, abs=0.5)
+    shapes = layout_shapes(design.layout, HUB, 0.0)
+    apron = next(s for s in shapes if s["kind"] == "apron")
+    lats = [p[0] for p in apron["polygon"]]
+    assert min(lats) < HUB[0] < max(lats)  # apron centred on the hub
+
+
+def test_parse_osm_height_tags():
+    assert parse_height_m("12") == 12
+    assert parse_height_m("12.5 m") == 12.5
+    assert parse_height_m("40 ft") == pytest.approx(12.192)
+    assert parse_height_m("tall") is None
+
+
+def _way(i, tags, pts):
+    return {"type": "way", "id": i, "tags": tags, "geometry": [{"lat": a, "lon": b} for a, b in pts]}
+
+
+def test_overpass_features():
+    sq = lambda x, y, s: [_ll(x, y), _ll(x + s, y), _ll(x + s, y + s), _ll(x, y + s)]  # noqa: E731
+    data = {"elements": [
+        _way(1, {"building": "retail", "height": "9"}, sq(-50, -100, 40)),
+        _way(2, {"building": "house", "building:levels": "2"}, sq(100, 100, 10)),
+        _way(3, {"building": "yes"}, sq(-100, 50, 10)),
+        _way(4, {"amenity": "parking"}, sq(-60, -60, 120)),  # contains the hub
+        _way(5, {"amenity": "school", "name": "Elm School"}, sq(300, 0, 80)),
+        _way(6, {"landuse": "residential"}, sq(0, 400, 200)),
+        {"type": "node", "id": 7, "lat": _ll(0, 80)[0], "lon": _ll(0, 80)[1], "tags": {"man_made": "mast"}},
+        {"type": "node", "id": 8, "lat": _ll(0, 90)[0], "lon": _ll(0, 90)[1],
+         "tags": {"power": "tower", "height": "30"}},
+    ]}
+    obstacles, zones, notes = features_from_overpass(data, HUB)
+    by_src = {o["source"].split(",")[0]: o for o in obstacles}
+    assert by_src["OSM way 1"]["height_m"] == 9
+    assert by_src["OSM way 2"]["height_m"] == 6.0 and "estimated" in by_src["OSM way 2"]["source"]
+    assert "assumed" in by_src["OSM way 3"]["source"]
+    assert by_src["OSM node 8"]["height_m"] == 30
+    assert "OSM node 7" not in by_src  # mast without height is skipped, and noted
+    kinds = sorted(z["kind"] for z in zones)
+    assert kinds == ["people", "residential", "residential", "school"]  # parking, landuse, house, school
+    assert any("inside a mapped parking area" in n for n in notes)
+    assert any("Skipped 1" in n for n in notes)
+    assert "around:400" in overpass_query(*HUB)
+
+
+KML_SAMPLE = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<Placemark><name>Hub</name><Point><coordinates>{HUB[1]},{HUB[0]},0</coordinates></Point></Placemark>
+<Placemark><name>Store</name><Point><coordinates>{_ll(0, -80)[1]},{_ll(0, -80)[0]},0</coordinates></Point></Placemark>
+<Placemark><name>Light pole 40 ft</name><Point><coordinates>{_ll(30, 0)[1]},{_ll(30, 0)[0]},0</coordinates></Point></Placemark>
+<Placemark><name>Lot</name><Polygon><outerBoundaryIs><LinearRing><coordinates>
+{" ".join(f"{lon},{lat},0" for lat, lon in [_ll(-35, -30), _ll(35, -30), _ll(35, 30), _ll(-35, 30), _ll(-35, -30)])}
+</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Houses on Oak St</name><Polygon><outerBoundaryIs><LinearRing><coordinates>
+{" ".join(f"{lon},{lat},0" for lat, lon in [_ll(-50, 150), _ll(50, 150), _ll(50, 300), _ll(-50, 150)])}
+</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+</Document></kml>"""
+
+
+def test_kml_import():
+    geo, notes = import_kml(KML_SAMPLE.encode())
+    assert geo["hub"] == pytest.approx(list(HUB))
+    assert geo["store"] is not None
+    assert len(geo["lot"]) == 4  # closing point dropped
+    assert geo["obstacles"][0]["height_m"] == pytest.approx(12.192, abs=0.05)
+    assert geo["zones"][0]["kind"] == "residential"
+
+
+def test_kmz_import():
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("doc.kml", KML_SAMPLE)
+    geo, _ = import_kml(buf.getvalue())
+    assert geo["hub"] is not None
+
+
+def test_kml_and_geojson_export_round_trip():
+    import json as js
+    geo, _ = import_kml(KML_SAMPLE.encode())
+    d = derive_site(geo)
+    data = HubInputs().to_dict()
+    data["site"].update(d.site)
+    data["airspace"].update(d.airspace)
+    design = evaluate(HubInputs.from_dict(data))
+    kml = export_kml(design, geo)
+    again, _ = import_kml(kml.encode())
+    assert again["hub"] == pytest.approx(list(HUB), abs=1e-6)
+    gj = js.loads(export_geojson(design, geo))
+    layers = {f["properties"]["layer"] for f in gj["features"]}
+    assert {"hub", "lot", "layout", "corridor", "obstacle", "zone"} <= layers

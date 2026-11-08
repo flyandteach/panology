@@ -65,11 +65,56 @@ efficiency and crew utilisation have placeholder defaults; edit them.
 
 - Airspace classes, airport proximity, terrain and the operator's own route
   approvals. Corridors are straight lanes against the obstacles and zones
-  you enter.
+  you enter or pull from OpenStreetMap.
 - Detailed sizing of the battery room's floor area and ventilation.
 - Noise from overflight, tonal penalties and day-night averages (Ldn).
 - Parcel flow from the store to the hub.
 - Downwash and FOD loading on surrounding surfaces.
+
+## Site map: pick a real site
+
+The **Site map** tab follows the workflow of Basil Yap's
+[Vertiport Surface Planner](https://github.com/basilbuildsai/vertiport-surface-planner):
+search or click to place a pin, see the result drawn on the map, export to
+Google Earth. No code was taken from that project, which uses a non-commercial
+license.
+
+1. Search an address (Photon geocoder) or paste coordinates, on satellite
+   imagery (Esri) or OpenStreetMap streets.
+2. **Place hub** (the apron centre; drag to adjust), **Mark store**, **Draw lot**.
+3. **Add obstacle** (click, then enter height and width) and **Draw sensitive
+   area** (homes, school, hospital, or "people" such as open parking, with the
+   minimum height aircraft should keep over it). Click any shape to edit or
+   delete it.
+4. Or **Fill from OpenStreetMap**: buildings within 400 m become obstacles,
+   and residential areas, houses, schools, hospitals and parking within 1 km
+   become sensitive areas. Each building's height is tagged with where it came
+   from: the OSM height tag, an estimate from its number of levels (3 m per
+   level), or an assumed 10 m when OSM has neither. Check these on the map. If
+   the hub sits inside a mapped parking lot, that lot stays a "people" area,
+   counted only outside your lot outline. OSM data is © OpenStreetMap
+   contributors (ODbL).
+5. The map then sets the lot width and depth (smallest enclosing rectangle;
+   the side facing the store is the frontage), the store direction, the
+   distance to the nearest home, school or hospital, and the obstacle and zone
+   tables. A sidebar switch turns this off to go back to the manual inputs. The
+   proposed layout and the chosen corridors are drawn back on the map.
+6. **Download for Google Earth (KML)** or **for GIS (GeoJSON)**. The KML
+   corridor centrelines follow the climb profile in 3D. "Save inputs" now
+   includes the map, so "Load inputs" restores it.
+
+**Google Earth import** (sidebar, KML or KMZ). Name the placemarks so the tool
+can sort them: a point `Hub` (or pad/site/nest) and a point `Store`; a polygon
+`Lot` (or site/parcel/boundary); points with a height in the name or
+description become obstacles (`Light pole 12 m`, `Tree 40 ft`, `h=15`);
+polygons named with home/house/residential, school, hospital, or
+parking/people become sensitive areas of that kind. Anything it can't place is
+listed in a note.
+
+Search, satellite tiles and OpenStreetMap queries run in your browser. The
+server never calls them. Leaflet 1.9.4 (BSD-2-Clause) is bundled in
+`hub/site_map/vendor/leaflet/`. Not covered yet: terrain elevation, airspace
+classes and nearby airports, and local climate data.
 
 ## Use
 

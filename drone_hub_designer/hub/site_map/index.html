@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hub site map</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<style>
+  :root {
+    --ink: #1f1f1d; --ink-2: #52514e; --line: #d6d4ce; --surface: #ffffff; --surface-2: #f4f3ef;
+    --accent: #2a78d6; --zone: #eb6834; --lot: #1f8a3b; --danger: #c62828;
+  }
+  html, body { margin: 0; padding: 0; background: var(--surface); color: var(--ink);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; }
+  .bar input[type=text] { flex: 1 1 220px; min-width: 160px; padding: 6px 8px; border: 1px solid var(--line);
+    border-radius: 6px; font: inherit; }
+  button { font: inherit; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface); color: var(--ink); cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.warn { color: var(--danger); }
+  #map { height: 560px; border: 1px solid var(--line); border-radius: 8px; }
+  #status { min-height: 18px; color: var(--ink-2); padding: 4px 0; }
+  #results { position: relative; }
+  #results ul { position: absolute; z-index: 1000; list-style: none; margin: 0; padding: 4px 0; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.12); width: 420px; max-width: 95vw; }
+  #results li { padding: 5px 10px; cursor: pointer; }
+  #results li:hover { background: var(--surface-2); }
+  #form { display: none; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px; margin: 4px 0;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; }
+  #form label { display: flex; gap: 4px; align-items: center; }
+  #form input, #form select { font: inherit; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; }
+  #form input[type=number] { width: 70px; }
+  .lbl { background: rgba(255,255,255,.9); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px;
+    font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .pop input { width: 70px; } .pop select { max-width: 120px; }
+  .pop button { margin-top: 4px; padding: 2px 8px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <input id="q" type="text" placeholder="Search an address, or paste coordinates like 35.7796, -78.6382">
+  <button id="go">Search</button>
+</div>
+<div id="results"></div>
+<div class="bar" id="tools">
+  <button data-mode="hub" title="Click the map to place the hub centre; drag the pin to adjust">1 Place hub</button>
+  <button data-mode="store" title="Click on the store building">2 Mark store</button>
+  <button data-mode="lot" title="Click the lot corners, then Finish">3 Draw lot</button>
+  <button data-mode="obstacle" title="Click a pole, tree, tower or building">Add obstacle</button>
+  <button data-mode="zone" title="Click around homes, a school or public parking, then Finish">Draw sensitive area</button>
+  <button id="finish" style="display:none">Finish shape</button>
+  <button id="osm" title="Load nearby buildings, homes, schools and parking from OpenStreetMap">Fill from OpenStreetMap</button>
+  <button id="clear" class="warn">Clear all</button>
+</div>
+<div id="form"></div>
+<div id="map"></div>
+<div id="status"></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script>
+"use strict";
+// --- Streamlit custom-component protocol (no build step) ---------------------------
+const send = (type, extra) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*");
+const setValue = (value) => send("streamlit:setComponentValue", { value, dataType: "json" });
+const setHeight = () => send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 8 });
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+let state = { version: -1, hub: null, store: null, lot: null, obstacles: [], zones: [] };
+let args = {};
+let rev = 0;
+let mode = null;
+let draft = [];       // vertices of the shape being drawn
+let fitted = false;
+
+L.Icon.Default.imagePath = "vendor/leaflet/images/";
+const imagery = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  { maxNativeZoom: 19, maxZoom: 21, attribution: "Imagery &copy; Esri and its data providers" });
+const streets = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  { maxNativeZoom: 19, maxZoom: 21, attribution: "&copy; OpenStreetMap contributors" });
+const map = L.map("map", { layers: [imagery], zoomControl: true }).setView([39.5, -98.35], 4);
+L.control.layers({ "Satellite": imagery, "Streets (OpenStreetMap)": streets }, {}, { position: "topright" }).addTo(map);
+L.control.scale({ metric: true, imperial: true }).addTo(map);
+
+const overlay = L.layerGroup().addTo(map);   // results from Python: layout + corridors
+const edit = L.layerGroup().addTo(map);      // the user's drawing
+const draftLayer = L.layerGroup().addTo(map);
+
+function status(msg) { document.getElementById("status").textContent = msg || ""; }
+
+function commit(extra) {
+  fitted = true;  // the user is working here; don't move the view on the next render
+  rev += 1;
+  setValue(Object.assign(clone(state), { rev }, extra || {}));
+}
+
+// --- drawing the user's site ---------------------------------------------------------
+const LAYOUT_STYLE = {
+  setback: { color: "#8a8a8a", fillColor: "#e8eef5", fillOpacity: .35, weight: 1 },
+  building: { color: "#7a5a3a", fillColor: "#c9b99a", fillOpacity: .8, weight: 1 },
+  apron: { color: "#555", fillColor: "#d9dde2", fillOpacity: .6, weight: 1 },
+  pad: { color: "#1f4f80", fillColor: "#4a7fb5", fillOpacity: .95, weight: 1 },
+  battery: { color: "#8a2f1a", fillColor: "#d0573a", fillOpacity: .95, weight: 1 },
+};
+
+function redraw() {
+  edit.clearLayers();
+  if (state.lot) {
+    L.polygon(state.lot, { color: "#1f8a3b", weight: 2, dashArray: "6 4", fillOpacity: .05 })
+      .bindTooltip("Lot").addTo(edit);
+  }
+  state.zones.forEach((z, i) => {
+    L.polygon(z.polygon, { color: "#eb6834", weight: 1.5, fillColor: "#eb6834", fillOpacity: .18 })
+      .bindPopup(() => zonePopup(i)).addTo(edit);
+  });
+  state.obstacles.forEach((o, i) => {
+    L.circleMarker([o.lat, o.lon], { radius: 6, color: "#222", weight: 1.5, fillColor: "#8c8c8c", fillOpacity: .9 })
+      .bindTooltip(`${esc(o.name)} (${Number(o.height_m).toFixed(0)} m)`)
+      .bindPopup(() => obstaclePopup(i)).addTo(edit);
+  });
+  if (state.store) {
+    L.circleMarker(state.store, { radius: 8, color: "#7a5a3a", weight: 2, fillColor: "#c9b99a", fillOpacity: 1 })
+      .bindTooltip("Store", { permanent: true, direction: "right", className: "lbl" }).addTo(edit);
+  }
+  if (state.hub) {
+    L.marker(state.hub, { draggable: true, title: "Hub centre" })
+      .on("dragend", (e) => { const p = e.target.getLatLng(); state.hub = [p.lat, p.lng]; commit(); })
+      .bindTooltip("Hub", { permanent: true, direction: "right", className: "lbl" }).addTo(edit);
+  }
+}
+
+function drawOverlay(ov) {
+  overlay.clearLayers();
+  if (!ov) return;
+  (ov.layout || []).forEach((s) => {
+    L.polygon(s.polygon, LAYOUT_STYLE[s.kind] || LAYOUT_STYLE.apron).bindTooltip(esc(s.name)).addTo(overlay);
+  });
+  (ov.corridors || []).forEach((c) => {
+    L.polygon(c.polygon, { color: "#2a78d6", weight: 2, fillColor: "#2a78d6", fillOpacity: .22 })
+      .bindTooltip(`Corridor ${String(Math.round(c.heading_deg)).padStart(3, "0")}°: ${Math.round(c.length_m)} m climb to cruise`)
+      .addTo(overlay);
+    L.marker(c.centreline[1], { icon: L.divIcon({ className: "lbl", html: String(Math.round(c.heading_deg)).padStart(3, "0") + "°", iconSize: null }) })
+      .addTo(overlay);
+  });
+}
+
+function zonePopup(i) {
+  const z = state.zones[i];
+  const kinds = ["residential", "school", "hospital", "people"];
+  const opts = kinds.map((k) => `<option ${k === z.kind ? "selected" : ""}>${k}</option>`).join("");
+  return `<div class="pop"><b>${esc(z.name)}</b><br>${esc(z.source || "drawn")}<br>
+    <label>Kind <select id="zk">${opts}</select></label><br>
+    <label>Keep above <input id="zh" type="number" min="0" value="${Number(z.min_overflight_m)}"> m</label><br>
+    <button onclick="saveZone(${i})">Save</button> <button class="warn" onclick="del('zones',${i})">Delete</button></div>`;
+}
+
+function obstaclePopup(i) {
+  const o = state.obstacles[i];
+  return `<div class="pop"><b>${esc(o.name)}</b><br>${esc(o.source || "drawn")}<br>
+    <label>Height <input id="oh" type="number" min="0" value="${Number(o.height_m)}"> m</label><br>
+    <label>Width <input id="ow" type="number" min="0" value="${Number(o.width_m)}"> m</label><br>
+    <button onclick="saveObstacle(${i})">Save</button> <button class="warn" onclick="del('obstacles',${i})">Delete</button></div>`;
+}
+
+window.saveZone = (i) => {
+  state.zones[i].kind = document.getElementById("zk").value;
+  state.zones[i].min_overflight_m = Number(document.getElementById("zh").value) || 0;
+  state.zones[i].source = (state.zones[i].source || "drawn") + " (edited)";
+  map.closePopup(); redraw(); commit();
+};
+window.saveObstacle = (i) => {
+  state.obstacles[i].height_m = Number(document.getElementById("oh").value) || 0;
+  state.obstacles[i].width_m = Number(document.getElementById("ow").value) || 1;
+  state.obstacles[i].source = (state.obstacles[i].source || "drawn") + " (edited)";
+  map.closePopup(); redraw(); commit();
+};
+window.del = (list, i) => { state[list].splice(i, 1); map.closePopup(); redraw(); commit(); };
+
+// --- modes ----------------------------------------------------------------------------
+const tools = document.querySelectorAll("#tools button[data-mode]");
+function setMode(m) {
+  mode = mode === m ? null : m;
+  draft = []; draftLayer.clearLayers(); hideForm();
+  tools.forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+  const polygonMode = mode === "lot" || mode === "zone";
+  document.getElementById("finish").style.display = polygonMode ? "" : "none";
+  if (polygonMode) map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
+  map.getContainer().style.cursor = mode ? "crosshair" : "";
+  const hints = {
+    hub: "Click the map where the hub's apron centre should go.",
+    store: "Click on the store building.",
+    lot: "Click each corner of the available lot, then Finish shape (or double-click).",
+    obstacle: "Click an obstacle: light pole, tree, tower, building.",
+    zone: "Click around the sensitive area, then Finish shape (or double-click).",
+  };
+  status(hints[mode] || "");
+  setHeight();
+}
+tools.forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+map.on("click", (e) => {
+  const p = [e.latlng.lat, e.latlng.lng];
+  if (mode === "hub") { state.hub = p; redraw(); commit(); setMode(null); status("Hub placed. Drag the pin to adjust."); }
+  else if (mode === "store") { state.store = p; redraw(); commit(); setMode(null); }
+  else if (mode === "obstacle") { obstacleForm(p); }
+  else if (mode === "lot" || mode === "zone") {
+    draft.push(p);
+    draftLayer.clearLayers();
+    L.polyline(draft, { color: mode === "lot" ? "#1f8a3b" : "#eb6834", dashArray: "4 4" }).addTo(draftLayer);
+    draft.forEach((q) => L.circleMarker(q, { radius: 3, color: "#000" }).addTo(draftLayer));
+  }
+});
+map.on("dblclick", () => { if (mode === "lot" || mode === "zone") finishShape(); });
+document.getElementById("finish").addEventListener("click", finishShape);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMode(null); });
+
+function finishShape() {
+  // A double-click also fires two clicks; drop duplicate vertices.
+  const pts = draft.filter((p, i) => i === 0 || Math.abs(p[0] - draft[i - 1][0]) + Math.abs(p[1] - draft[i - 1][1]) > 1e-7);
+  if (pts.length < 3) { status("A shape needs at least three corners."); return; }
+  if (mode === "lot") { state.lot = pts; redraw(); commit(); setMode(null); status("Lot drawn."); }
+  else { zoneForm(pts); }
+}
+
+// --- small forms ------------------------------------------------------------------------
+const form = document.getElementById("form");
+function hideForm() { form.style.display = "none"; form.innerHTML = ""; setHeight(); }
+
+function obstacleForm(p) {
+  form.innerHTML = `<b>New obstacle</b>
+    <label>Name <input id="fn" type="text" value="Obstacle"></label>
+    <label>Height <input id="fh" type="number" min="0" value="10"> m</label>
+    <label>Width <input id="fw" type="number" min="0" value="5"> m</label>
+    <button id="fadd" class="on">Add</button> <button id="fcancel">Cancel</button>`;
+  form.style.display = "flex"; setHeight();
+  document.getElementById("fh").focus();
+  document.getElementById("fadd").onclick = () => {
+    state.obstacles.push({ name: document.getElementById("fn").value || "Obstacle", lat: p[0], lon: p[1],
+      height_m: Number(document.getElementById("fh").value) || 0, width_m: Number(document.getElementById("fw").value) || 1,
+      source: "drawn" });
+    hideForm(); redraw(); commit();
+  };
+  document.getElementById("fcancel").onclick = hideForm;
+}
+
+function zoneForm(pts) {
+  const d = args.min_overflight_defaults || {};
+  form.innerHTML = `<b>New sensitive area</b>
+    <label>Name <input id="fn" type="text" value="Homes"></label>
+    <label>Kind <select id="fk"><option>residential</option><option>school</option><option>hospital</option><option>people</option></select></label>
+    <label>Keep aircraft above <input id="fh" type="number" min="0" value="${d.residential ?? 45}"> m</label>
+    <button id="fadd" class="on">Add</button> <button id="fcancel">Cancel</button>`;
+  form.style.display = "flex"; setHeight();
+  document.getElementById("fk").onchange = (e) => { if (d[e.target.value] != null) document.getElementById("fh").value = d[e.target.value]; };
+  document.getElementById("fadd").onclick = () => {
+    state.zones.push({ name: document.getElementById("fn").value || "Area", kind: document.getElementById("fk").value,
+      min_overflight_m: Number(document.getElementById("fh").value) || 0, polygon: pts, source: "drawn" });
+    hideForm(); setMode(null); redraw(); commit();
+  };
+  document.getElementById("fcancel").onclick = () => { hideForm(); setMode(null); };
+}
+
+// --- search (Photon geocoder, run from the browser) --------------------------------------------
+async function search() {
+  const q = document.getElementById("q").value.trim();
+  const box = document.getElementById("results");
+  box.innerHTML = "";
+  const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) { map.setView([Number(m[1]), Number(m[2])], 18); return; }
+  if (!q) return;
+  status("Searching…");
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=5`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const js = await r.json();
+    const items = (js.features || []).map((f) => {
+      const p = f.properties || {};
+      const label = [p.name, p.housenumber && p.street ? `${p.housenumber} ${p.street}` : p.street, p.city, p.state, p.country]
+        .filter(Boolean).join(", ");
+      return { label, lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] };
+    });
+    if (!items.length) { status("No match. Try a fuller address, or paste coordinates."); return; }
+    status("");
+    box.innerHTML = "<ul>" + items.map((it, i) => `<li data-i="${i}">${esc(it.label)}</li>`).join("") + "</ul>";
+    box.querySelectorAll("li").forEach((li) => li.addEventListener("click", () => {
+      const it = items[Number(li.dataset.i)];
+      map.setView([it.lat, it.lon], 18); box.innerHTML = "";
+    }));
+  } catch (err) {
+    status(`Search failed (${err.message}). Paste coordinates instead, or pan the map.`);
+  }
+}
+document.getElementById("go").addEventListener("click", search);
+document.getElementById("q").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+
+// --- OpenStreetMap fill (Overpass, run from the browser) -------------------------------------------
+document.getElementById("osm").addEventListener("click", async () => {
+  if (!state.hub) { status("Place the hub first."); return; }
+  if (!args.osm_query || !args.osm_url) { status("OpenStreetMap query unavailable."); return; }
+  status("Loading OpenStreetMap features…");
+  try {
+    const r = await fetch(args.osm_url, { method: "POST", body: "data=" + encodeURIComponent(args.osm_query),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    status(`Received ${(data.elements || []).length} OpenStreetMap features; processing…`);
+    commit({ osm: { request_id: `${Date.now()}`, hub: state.hub, data } });
+  } catch (err) {
+    status(`OpenStreetMap request failed (${err.message}). Try again later, or draw the features by hand.`);
+  }
+});
+
+document.getElementById("clear").addEventListener("click", () => {
+  if (!confirm("Remove the hub, store, lot, obstacles and areas from the map?")) return;
+  state = { version: state.version, hub: null, store: null, lot: null, obstacles: [], zones: [] };
+  overlay.clearLayers(); redraw(); commit();
+});
+
+// --- render from Python ------------------------------------------------------------------------
+window.addEventListener("message", (event) => {
+  if (!event.data || event.data.type !== "streamlit:render") return;
+  args = event.data.args || {};
+  const g = args.geometry;
+  if (g && g.version > state.version) {
+    // Python replaced the drawing (import, OpenStreetMap fill, loaded design): show it.
+    state = clone(g);
+    redraw();
+    fitted = false;
+    status("");
+  }
+  if (!fitted && state.hub) {
+    const pts = [state.hub].concat(state.lot || [], state.store ? [state.store] : []);
+    if (pts.length > 1) map.fitBounds(L.latLngBounds(pts).pad(0.6), { maxZoom: 19 });
+    else map.setView(state.hub, 18);
+    fitted = true;
+  }
+  drawOverlay(args.overlay);
+  if (args.message) status(args.message);
+  setHeight();
+});
+
+send("streamlit:componentReady", { apiVersion: 1 });
+setHeight();
+</script>
+</body>
+</html>

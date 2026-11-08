@@ -8,7 +8,11 @@ import streamlit as st
 
 from hub import CRITERIA, HubInputs, compare_with_baseline
 from hub.aircraft_library import LIBRARY, facts, profile_for, provenance, reference_names
+from hub.geo import corridor_shapes, derive_site, empty_geometry, layout_shapes
+from hub.kml import export_geojson, export_kml, import_kml
 from hub.models import AirspaceProfile, CostInputs, DemandProfile, DesignRequirements, Obstacle, SensitiveZone, SiteProfile
+from hub.osm import DEFAULT_MIN_OVERFLIGHT_M, OVERPASS_URL, features_from_overpass, overpass_query
+from map_component import site_map
 
 st.set_page_config(page_title="Drone Delivery Hub Designer", layout="wide")
 st.title("Drone Delivery Hub Designer")
@@ -18,9 +22,74 @@ st.caption(
     "replace them with OEM figures, site measurements and your AHJ's requirements."
 )
 
+# --- site map state ---------------------------------------------------------------------
+# The map component sends its drawing (session_state[MAP_KEY]). Python replaces the drawing
+# (KML import, OpenStreetMap fill, a loaded design file) by setting a geometry with a higher
+# version, which the map adopts on its next render.
+MAP_KEY = "site_map"
+ss = st.session_state
+ss.setdefault("geo_override", None)
+ss.setdefault("geo_notes", [])
+ss.setdefault("processed", [])
+
+
+def current_geometry() -> dict:
+    sent, over = ss.get(MAP_KEY), ss.geo_override
+    if over is not None and (sent is None or sent.get("version", -1) < over["version"]):
+        return json.loads(json.dumps(over))
+    if sent:
+        return {k: sent.get(k, v) for k, v in empty_geometry().items()}
+    return empty_geometry()
+
+
+def replace_geometry(geo: dict, notes: list[str]) -> None:
+    sent = ss.get(MAP_KEY) or {}
+    newest = max(sent.get("version", 0), (ss.geo_override or {}).get("version", 0))
+    ss.geo_override = {**empty_geometry(), **geo, "version": newest + 1}
+    ss.geo_notes = notes
+
+
+def once(token: str) -> bool:
+    """True the first time a token (file id, OSM request id) is seen."""
+    if token in ss.processed:
+        return False
+    ss.processed.append(token)
+    return True
+
+
 uploaded = st.sidebar.file_uploader("Load inputs (JSON)", type="json")
-base = HubInputs.from_dict(json.load(uploaded)) if uploaded else HubInputs()
+raw_inputs = json.load(uploaded) if uploaded else {}
+base = HubInputs.from_dict(raw_inputs)
 upload_key = uploaded.file_id if uploaded else "default"
+if uploaded and raw_inputs.get("site_map") and once(f"json:{uploaded.file_id}"):
+    replace_geometry(raw_inputs["site_map"], ["Site loaded from the design file."])
+
+kml_file = st.sidebar.file_uploader("Import site from Google Earth (KML/KMZ)", type=["kml", "kmz"],
+                                    help="Name a point Hub and one Store, a polygon Lot, and polygons for homes, "
+                                         "schools or parking. See the README for the naming rules.")
+if kml_file and once(f"kml:{kml_file.file_id}"):
+    try:
+        replace_geometry(*import_kml(kml_file.getvalue()))
+    except Exception as exc:  # malformed KML: report it instead of stopping the app
+        st.sidebar.error(f"Could not read that file: {exc}")
+
+sent = ss.get(MAP_KEY) or {}
+osm = sent.get("osm")
+if osm and osm.get("data") and once(f"osm:{osm.get('request_id')}"):
+    geo = current_geometry()
+    obstacles, zones, notes = features_from_overpass(osm["data"], tuple(osm["hub"]))
+    geo["obstacles"] = [o for o in geo["obstacles"] if not str(o.get("source", "")).startswith("OSM")] + obstacles
+    geo["zones"] = [z for z in geo["zones"] if not str(z.get("source", "")).startswith("OSM")] + zones
+    replace_geometry(geo, [f"Added {len(obstacles)} obstacles and {len(zones)} sensitive areas from "
+                           "OpenStreetMap (© OpenStreetMap contributors, ODbL)."] + notes)
+
+geometry = current_geometry()
+use_map = False
+derived = derive_site(geometry)
+if geometry.get("hub"):
+    use_map = st.sidebar.toggle("Use the site drawn on the map", value=True,
+                                help="Lot size, nearest receptor, store direction, obstacles and sensitive areas "
+                                     "come from the Site map tab instead of the manual inputs.")
 
 names = reference_names()
 ref_ids = list(names)
@@ -70,8 +139,17 @@ for section, title, dc in [
     ("design", "Design choices", DesignRequirements),
 ]:
     current = getattr(base, section)
+    from_map = derived.site if (use_map and section == "site") else {}
     with st.sidebar.expander(title, expanded=section == "demand"):
-        values[section] = {f.name: widget(section, f.name, getattr(current, f.name)) for f in fields(dc)}
+        values[section] = {}
+        for f in fields(dc):
+            if f.name in from_map:
+                v = from_map[f.name]
+                st.number_input(f.name.replace("_", " ") + " (from map)", value=float(v), disabled=True,
+                                key=f"{key_prefix}.{section}.{f.name}.map{v}")
+                values[section][f.name] = v
+            else:
+                values[section][f.name] = widget(section, f.name, getattr(current, f.name))
 
 with st.sidebar.expander("Unit costs"):
     st.caption("Enter your own prices. Zero means not entered. Only electricity has a default "
@@ -79,27 +157,42 @@ with st.sidebar.expander("Unit costs"):
     values["costs"] = {f.name: widget("costs", f.name, getattr(base.costs, f.name)) for f in fields(CostInputs)}
 
 with st.sidebar.expander("Flight path settings"):
-    air_scalars = {
-        f.name: widget("airspace", f.name, getattr(base.airspace, f.name))
-        for f in fields(AirspaceProfile)
-        if f.name not in ("obstacles", "zones")
-    }
+    air_scalars = {}
+    for f in fields(AirspaceProfile):
+        if f.name in ("obstacles", "zones"):
+            continue
+        if use_map and f.name in derived.airspace:
+            v = derived.airspace[f.name]
+            st.number_input(f.name.replace("_", " ") + " (from map)", value=float(v), disabled=True,
+                            key=f"{key_prefix}.airspace.{f.name}.map{v}")
+            air_scalars[f.name] = v
+        else:
+            air_scalars[f.name] = widget("airspace", f.name, getattr(base.airspace, f.name))
 
 metrics_box = st.container()
-tabs = st.tabs(["Layout and scorecard", "Flight paths", "Costs", "Throughput", "Noise", "Weather and night",
-                "Aircraft reference", "All checks"])
+tabs = st.tabs(["Site map", "Layout and scorecard", "Flight paths", "Costs", "Throughput", "Noise",
+                "Weather and night", "Aircraft reference", "All checks"])
 
-with tabs[1]:
-    st.markdown("**Site surroundings.** Bearings are compass degrees from the hub centre; heights are above "
-                "hub ground level. The starting rows are an invented example site.")
-    obstacles_df = st.data_editor(
-        pd.DataFrame([asdict(o) for o in base.airspace.obstacles], columns=[f.name for f in fields(Obstacle)]),
-        num_rows="dynamic", key=f"{upload_key}.obstacles", use_container_width=True,
-    )
-    zones_df = st.data_editor(
-        pd.DataFrame([asdict(z) for z in base.airspace.zones], columns=[f.name for f in fields(SensitiveZone)]),
-        num_rows="dynamic", key=f"{upload_key}.zones", use_container_width=True,
-    )
+with tabs[2]:
+    if use_map:
+        st.markdown("**Site surroundings, from the map.** Edit them on the Site map tab. Bearings are compass "
+                    "degrees from the hub; sectors are the directions each area covers as seen from the hub.")
+        obstacles_df = pd.DataFrame(derived.airspace["obstacles"], columns=[f.name for f in fields(Obstacle)])
+        zones_df = pd.DataFrame(derived.airspace["zones"], columns=[f.name for f in fields(SensitiveZone)])
+        st.dataframe(obstacles_df, hide_index=True, use_container_width=True)
+        st.dataframe(zones_df, hide_index=True, use_container_width=True)
+    else:
+        st.markdown("**Site surroundings.** Bearings are compass degrees from the hub centre; heights are above "
+                    "hub ground level. The starting rows are an invented example site; draw your own site on the "
+                    "Site map tab instead.")
+        obstacles_df = st.data_editor(
+            pd.DataFrame([asdict(o) for o in base.airspace.obstacles], columns=[f.name for f in fields(Obstacle)]),
+            num_rows="dynamic", key=f"{upload_key}.obstacles", use_container_width=True,
+        )
+        zones_df = st.data_editor(
+            pd.DataFrame([asdict(z) for z in base.airspace.zones], columns=[f.name for f in fields(SensitiveZone)]),
+            num_rows="dynamic", key=f"{upload_key}.zones", use_container_width=True,
+        )
 
 
 def rows(df: pd.DataFrame) -> list[dict]:
@@ -134,7 +227,7 @@ with metrics_box:
     cols[6].metric("Availability", f"{proposed.availability.availability:.0%}",
                    delta=f"{proposed.availability.availability - baseline.availability.availability:+.0%}")
 
-with tabs[0]:
+with tabs[1]:
     left, right = st.columns([3, 2])
     with left:
         if not proposed.layout.fits:
@@ -163,7 +256,7 @@ with tabs[0]:
         if not open_items and not proposed.fire.flags:
             st.success("Every check passes for these inputs.")
 
-with tabs[1]:
+with tabs[2]:
     m, p = st.columns(2)
     with m:
         st.markdown(fp.to_map_svg(inputs.airspace, inputs.aircraft), unsafe_allow_html=True)
@@ -192,7 +285,7 @@ with tabs[1]:
                "obstacles and zones you enter. It does not check airspace classes, airport proximity, "
                "terrain, or the operator's own route approvals.")
 
-with tabs[2]:
+with tabs[3]:
     pc, bc = proposed.costs, baseline.costs
     if pc.missing:
         st.info("Unit costs not entered for: " + ", ".join(pc.missing) + ". Those lines count as zero, so the "
@@ -220,7 +313,7 @@ with tabs[2]:
         "Energy assumes one full pack charge per sortie. The baseline uses the same unit costs."
     )
 
-with tabs[3]:
+with tabs[4]:
     st.write(
         f"{cap.sorties_per_hour:.0f} sorties/h at peak. Mean trip {cap.mean_trip_km:.1f} km each way; "
         f"flight {cap.flight_time_s / 60:.1f} min, ground turnaround {cap.ground_turnaround_s / 60:.1f} min, "
@@ -234,7 +327,7 @@ with tabs[3]:
     )
     st.write(f"Lithium-ion energy on site: {cap.stored_energy_kwh:.1f} kWh across {cap.batteries_required} packs.")
 
-with tabs[4]:
+with tabs[5]:
     n, bn = proposed.noise, baseline.noise
     st.write(
         f"Proposed: {n.level_with_barrier_db:.1f} dBA at the nearest receptor "
@@ -248,7 +341,7 @@ with tabs[4]:
     st.caption("Screening estimate: point source, spherical spreading, thin-barrier approximation. "
                "Covers lift-off and landing only; overflight noise is not shielded by a barrier.")
 
-with tabs[5]:
+with tabs[6]:
     a, ba = proposed.availability, baseline.availability
     st.write(
         f"Aircraft limits (wind, precipitation, night) remove {a.aircraft_limited_frac:.1%} of operating hours "
@@ -259,7 +352,7 @@ with tabs[5]:
     if ba.causes:
         st.table(pd.DataFrame({"Share of operating hours": {k: f"{v:.1%}" for k, v in ba.causes.items()}}))
 
-with tabs[6]:
+with tabs[7]:
     st.subheader(LIBRARY[ref_id]["name"])
     st.caption("Figures were taken from web search excerpts of the documents linked; they were not checked "
                "against the full documents. 'single source' and 'unverified' values deserve a second look.")
@@ -274,14 +367,63 @@ with tabs[6]:
         st.dataframe(pd.DataFrame(fact_rows), column_config={"sources": st.column_config.ListColumn("sources")},
                      hide_index=True, use_container_width=True)
 
-with tabs[7]:
+with tabs[8]:
     check_rows = []
     for p_, b_ in zip(proposed.checks, baseline.checks):
         check_rows.append({"Category": p_.category, "Check": p_.name, "Proposed": "pass" if p_.passed else "FAIL",
                            "Baseline": "pass" if b_.passed else "FAIL", "Detail (proposed)": p_.detail})
     st.dataframe(pd.DataFrame(check_rows), use_container_width=True, hide_index=True)
 
-st.sidebar.download_button("Save inputs (JSON)", json.dumps(inputs.to_dict(), indent=2), "hub_inputs.json")
+def _gap(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+with tabs[0]:
+    st.caption(
+        "Search an address or paste coordinates, then: 1 place the hub (the apron centre), 2 mark the store, "
+        "3 draw the lot. Add obstacles and sensitive areas by hand, or fill them from OpenStreetMap. The proposed "
+        "layout and the chosen corridors are drawn back onto the map. Or import a Google Earth KML/KMZ in the sidebar."
+    )
+    hub = tuple(geometry["hub"]) if geometry.get("hub") else None
+    overlay = None
+    if hub and use_map:
+        up = inputs.airspace.store_bearing_deg + 180.0
+        if derived.frontage_bearing_deg is not None and "store_bearing_deg" in derived.airspace:
+            # Lay the hub square to the lot, with its depth axis pointing away from the store.
+            up = (derived.frontage_bearing_deg + 90.0) % 360.0
+            if _gap(up, inputs.airspace.store_bearing_deg) < 90:
+                up = (up + 180.0) % 360.0
+        overlay = {"layout": layout_shapes(proposed.layout, hub, up),
+                   "corridors": corridor_shapes(fp, hub, inputs.airspace.corridor_half_width_m)}
+    site_map(geometry=geometry, overlay=overlay, osm_query=overpass_query(*hub) if hub else None,
+             osm_url=OVERPASS_URL, min_overflight_defaults=DEFAULT_MIN_OVERFLIGHT_M, key=MAP_KEY)
+    for note in ss.geo_notes + (derived.notes if hub else []):
+        st.info(note)
+    if hub and use_map:
+        d = derived
+        parts = []
+        if "width_m" in d.site:
+            parts.append(f"lot {d.site['width_m']:.0f} m wide x {d.site['depth_m']:.0f} m deep "
+                         f"({'the hub fits' if proposed.layout.fits else 'the hub does NOT fit'}: needs "
+                         f"{proposed.layout.required_w:.0f} x {proposed.layout.required_d:.0f} m)")
+        if "store_bearing_deg" in d.airspace:
+            parts.append(f"store at {d.airspace['store_bearing_deg']:03.0f}°")
+        if "nearest_receptor_m" in d.site:
+            parts.append(f"nearest home/school/hospital {d.site['nearest_receptor_m']:.0f} m")
+        parts.append(f"{len(d.airspace['obstacles'])} obstacles, {len(d.airspace['zones'])} sensitive areas")
+        st.write("From the map: " + "; ".join(parts) + ".")
+        k1, k2 = st.columns(2)
+        k1.download_button("Download for Google Earth (KML)", export_kml(proposed, geometry), "drone_hub.kml",
+                           mime="application/vnd.google-earth.kml+xml")
+        k2.download_button("Download for GIS (GeoJSON)", export_geojson(proposed, geometry), "drone_hub.geojson",
+                           mime="application/geo+json")
+    elif hub:
+        st.write("The map site is switched off in the sidebar, so the manual site inputs are used.")
+
+saved = inputs.to_dict()
+if geometry.get("hub") or geometry.get("lot"):
+    saved["site_map"] = geometry
+st.sidebar.download_button("Save inputs (JSON)", json.dumps(saved, indent=2), "hub_inputs.json")
 st.sidebar.download_button(
     "Download results (JSON)",
     json.dumps({"proposed": proposed.summary(), "baseline": baseline.summary()}, indent=2),
