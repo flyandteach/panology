@@ -48,6 +48,20 @@ DOWNLOADS_DIR = os.path.join(OUTPUT_DIR, "downloads")
 # account's email (Drive service accounts have no storage quota of their own).
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
 
+# --- Email delivery ---
+# Sends a weekly digest (what ran, what was found, links) via SMTP. Default
+# transport is Gmail SMTP with an App Password -- no new third-party account
+# needed. Auth/config via env vars:
+#   EMAIL_SMTP_USER      - the Gmail address to send from
+#   EMAIL_SMTP_PASSWORD  - a Gmail App Password (requires 2FA on that account;
+#                          https://myaccount.google.com/apppasswords)
+#   EMAIL_TO             - recipient(s), comma-separated (defaults to EMAIL_SMTP_USER)
+# Without EMAIL_SMTP_USER/PASSWORD configured, the pipeline still runs; it
+# just skips sending and says so in the run report.
+EMAIL_SMTP_HOST = os.environ.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+EMAIL_SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "587"))
+EMAIL_TO = os.environ.get("EMAIL_TO") or "flyandteach@gmail.com"
+
 # --- HTTP ---
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

@@ -25,13 +25,14 @@ def cli():
 
 
 @cli.command("run-weekly")
-@click.option("--dry-run", is_flag=True, help="Search, download, and score, but skip the Drive upload and dedupe write.")
+@click.option("--dry-run", is_flag=True, help="Search, download, and score, but skip the Drive upload, email, and dedupe write.")
+@click.option("--no-email", is_flag=True, help="Skip sending the weekly digest email.")
 @click.option("--max-results", default=None, type=int, help="Override max results per topic (default: config.MAX_RESULTS_PER_TOPIC).")
 @click.option("--report-json", default=None, type=click.Path(), help="Write the full run report as JSON to this path.")
-def run_weekly(dry_run, max_results, report_json):
-    """Run the full weekly search -> filter -> summarize -> upload pipeline once."""
+def run_weekly(dry_run, no_email, max_results, report_json):
+    """Run the full weekly search -> filter -> summarize -> upload -> email pipeline once."""
     console.print("[bold]AMRG weekly run starting...[/bold]")
-    report = pipeline.run_weekly(max_results_per_topic=max_results, dry_run=dry_run)
+    report = pipeline.run_weekly(max_results_per_topic=max_results, dry_run=dry_run, send_email=not no_email)
 
     table = Table(title="Search results by topic")
     table.add_column("Topic")
@@ -66,6 +67,12 @@ def run_weekly(dry_run, max_results, report_json):
         for e in report["errors"]:
             console.print(f"  - [{e.get('stage', '?')}] {e.get('title') or e.get('topic')}: {e['error']}")
 
+    email_result = report.get("email", {})
+    if email_result.get("sent"):
+        console.print(f"[green]Weekly digest emailed to {config.EMAIL_TO}.[/green]")
+    else:
+        console.print(f"[yellow]Digest email not sent: {email_result.get('error')}[/yellow]")
+
     if report_json:
         # Drop full markdown bodies from the JSON dump to keep it readable;
         # they're already written out as .docx files.
@@ -87,6 +94,8 @@ def show_config():
     console.print(f"\nMax results/topic: {config.MAX_RESULTS_PER_TOPIC}")
     console.print(f"Drive folder configured: {'yes' if config.GOOGLE_DRIVE_FOLDER_ID else 'no'}")
     console.print(f"Anthropic key configured: {'yes' if os.environ.get('ANTHROPIC_API_KEY') else 'no'}")
+    email_configured = bool(os.environ.get("EMAIL_SMTP_USER") and os.environ.get("EMAIL_SMTP_PASSWORD"))
+    console.print(f"Email digest configured: {'yes, to ' + config.EMAIL_TO if email_configured else 'no'}")
 
 
 if __name__ == "__main__":

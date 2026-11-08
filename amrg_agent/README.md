@@ -5,7 +5,8 @@ Mobility (AAM), Urban Air Mobility (UAM), eVTOLs, electric aircraft,
 vertiports, and AI in aviation; keeps only articles with a public full-text
 link; downloads and reads them; and produces an AMRG-template summary
 (with extracted figures, a writing-quality score, and a heuristic fact
-check) delivered as a Google Doc.
+check) delivered as a Google Doc, with a weekly digest emailed out
+summarizing what ran.
 
 **Read the Limitations section before relying on this for anything
 time-sensitive.** This is a best-effort scraper against a service with no
@@ -35,7 +36,11 @@ audit.
    figures by number (`agents/summarizer.py`).
 7. **Deliver** — renders the summary + figures to a `.docx` and uploads it
    to a Google Drive folder as a Google Doc (`agents/drive_upload.py`).
-8. **Record** — marks the article as seen so it isn't reprocessed next week.
+8. **Email** — sends a digest (new articles + links, search coverage by
+   topic, any blocked/errored topics) via SMTP (`agents/email_notify.py`).
+   Sent every run, including "nothing new this week," so a silently
+   blocked run is still visible.
+9. **Record** — marks the article as seen so it isn't reprocessed next week.
 
 Any single article failing (bad download, unparsable PDF, blocked search)
 is logged in the run report and does not stop the rest of the run.
@@ -57,12 +62,15 @@ python -m nltk.downloader cmudict   # one-time; textstat's readability scorer ne
 | `ANTHROPIC_API_KEY` | Summaries + LLM-rated scores | Without it, those steps fall back to mock/placeholder output so the pipeline still runs end-to-end. |
 | `GOOGLE_DRIVE_FOLDER_ID` | Drive delivery | Folder must already exist and be shared (Editor) with the service account's email. Without it, summaries are still built as local `.docx` files under `output/`. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_SERVICE_ACCOUNT_FILE` | Drive delivery | Service-account key JSON (inline or path). Create one in Google Cloud Console with the Drive API enabled, then share the target folder with `<name>@<project>.iam.gserviceaccount.com`. |
+| `EMAIL_SMTP_USER` + `EMAIL_SMTP_PASSWORD` | Weekly digest email | A Gmail address and a Gmail **App Password** for it (not your normal password) — requires 2FA enabled on that account, then generate one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords). Without these, the pipeline still runs; it just skips the email and says so in the run report. |
+| `EMAIL_TO` | Weekly digest email | Recipient(s), comma-separated. Defaults to `flyandteach@gmail.com`. |
 
 ### Run it once
 
 ```bash
 python app.py show-config
-python app.py run-weekly --dry-run          # search + score, skip upload/dedupe
+python app.py run-weekly --dry-run          # search + score, skip upload/email/dedupe
+python app.py run-weekly --no-email         # everything except the email
 python app.py run-weekly --report-json out.json
 ```
 
@@ -73,10 +81,12 @@ python app.py run-weekly --report-json out.json
 `.github/workflows/amrg_weekly.yml` runs `run-weekly` every Monday via
 GitHub Actions and commits the updated `state/seen_articles.json` back to
 the branch so dedupe persists across runs (Actions runners are ephemeral).
-Configure `ANTHROPIC_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and
-`GOOGLE_DRIVE_FOLDER_ID` as repository secrets for it to actually deliver
-anything — without them it will still run (mock summaries, local `.docx`
-only) but won't reach Drive.
+Configure `ANTHROPIC_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`,
+`GOOGLE_DRIVE_FOLDER_ID`, `EMAIL_SMTP_USER`, and `EMAIL_SMTP_PASSWORD` as
+repository secrets (Settings → Secrets and variables → Actions) for it to
+actually deliver anything — without them it will still run (mock summaries,
+local `.docx` only, no email) but won't reach Drive or your inbox.
+`EMAIL_TO` is optional there too (defaults to `flyandteach@gmail.com`).
 
 If you'd rather trigger it from a scheduled Claude Code session/Routine
 instead of GitHub Actions, point that Routine's prompt at
@@ -133,6 +143,7 @@ amrg_agent/
     scoring.py               # readability + writing-quality formula
     summarizer.py             # AMRG template summary assembly
     drive_upload.py            # docx build + Google Drive upload
+    email_notify.py              # weekly digest email (SMTP)
   prompts/
     amrg_template.md      # the AMRG summary prompt/template
   state/

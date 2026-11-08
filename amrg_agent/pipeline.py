@@ -19,11 +19,12 @@ import os
 import traceback
 
 import config
-from agents import scholar_search, pdf_extract, fact_check, scoring, summarizer, drive_upload
+from agents import scholar_search, pdf_extract, fact_check, scoring, summarizer, drive_upload, email_notify
 from utils import state
 
 
-def run_weekly(topics: dict = None, max_results_per_topic: int = None, dry_run: bool = False) -> dict:
+def run_weekly(topics: dict = None, max_results_per_topic: int = None, dry_run: bool = False,
+               send_email: bool = True) -> dict:
     """Run the full pipeline once. Returns a run report dict."""
     os.makedirs(config.OUTPUT_DIR, exist_ok=True)
     os.makedirs(config.DOWNLOADS_DIR, exist_ok=True)
@@ -67,13 +68,20 @@ def run_weekly(topics: dict = None, max_results_per_topic: int = None, dry_run: 
     if not dry_run:
         state.save_seen(seen)
 
-    return {
+    report = {
         "search_report": {k: {"count": len(v["results"]), "blocked": v["blocked"], "error": v["error"]}
                            for k, v in search_report.items()},
         "processed": processed,
         "skipped": skipped,
         "errors": errors,
     }
+
+    if send_email and not dry_run:
+        report["email"] = email_notify.send_digest(report)
+    else:
+        report["email"] = {"sent": False, "error": "skipped (dry-run or --no-email)"}
+
+    return report
 
 
 def _process_article(result: dict, dry_run: bool = False) -> dict:
