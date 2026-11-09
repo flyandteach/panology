@@ -3,11 +3,6 @@ click>=8.0.0
 rich>=13.0.0
 requests>=2.31.0
 textstat>=0.7.0
-scholarly>=1.7.11
-# scholarly 1.7.x imports bibtexparser's old 1.x API (bibtexparser.bibdatabase);
-# scholarly's own dependency spec has no upper bound, so an unpinned install
-# resolves bibtexparser 2.x and breaks on import. Pin until scholarly updates.
-bibtexparser<2.0,>=1.2.0
 pymupdf>=1.24.0
 python-docx>=1.1.0
 google-api-python-client>=2.120.0

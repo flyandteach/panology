@@ -15,9 +15,9 @@ on that page -- reference these by number in the Summary where relevant,
 e.g. "(see Figure 2)"; number them in reading order starting at 1):
 {FIGURE_LIST}
 
-SCHOLAR METADATA (use to cross-check/fill gaps, but prefer the article text
-itself when they conflict):
-{SCHOLAR_METADATA}
+SOURCE METADATA (from the OpenAlex record for this work; use to cross-check/
+fill gaps, but prefer the article text itself when they conflict):
+{SOURCE_METADATA}
 
 ---
 
@@ -35,7 +35,7 @@ than guessing.
 
 ## Where?
 The publication name in italics (e.g. *Journal of Air Transportation*), and
-a link to the article (use the Scholar URL provided in metadata, or the DOI
+a link to the article (use the source URL provided in metadata, or the DOI
 if present in the text).
 
 ## Summary

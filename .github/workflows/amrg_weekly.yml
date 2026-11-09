@@ -42,6 +42,8 @@ jobs:
           EMAIL_SMTP_USER: ${{ secrets.EMAIL_SMTP_USER }}
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          OPENALEX_MAILTO: ${{ secrets.OPENALEX_MAILTO }}
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
         run: python app.py run-weekly --report-json run_report.json
 
       - name: Upload run report artifact

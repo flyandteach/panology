@@ -1,7 +1,7 @@
 """
 End-to-end weekly pipeline:
 
-  1. Search Google Scholar for each configured topic (agents/scholar_search.py)
+  1. Search OpenAlex for each configured topic (agents/article_search.py)
   2. Keep only results with a public full-text link, not already processed
   3. Download the PDF and extract text + figures (agents/pdf_extract.py)
   4. Run the heuristic fact-check (agents/fact_check.py)
@@ -10,7 +10,7 @@ End-to-end weekly pipeline:
   7. Render to .docx and upload to Google Drive (agents/drive_upload.py)
   8. Record the article as seen (utils/state.py)
 
-Any failure on an individual article (bad download, blocked Scholar page,
+Any failure on an individual article (bad download, rate-limited search,
 etc.) is caught and logged in the run report; it never aborts the rest of
 the run.
 """
@@ -19,7 +19,7 @@ import os
 import traceback
 
 import config
-from agents import scholar_search, pdf_extract, fact_check, scoring, summarizer, drive_upload, email_notify
+from agents import article_search, pdf_extract, fact_check, scoring, summarizer, drive_upload, email_notify
 from utils import state
 
 
@@ -30,7 +30,7 @@ def run_weekly(topics: dict = None, max_results_per_topic: int = None, dry_run: 
     os.makedirs(config.DOWNLOADS_DIR, exist_ok=True)
 
     seen = state.load_seen()
-    search_report = scholar_search.search_all_topics(topics, max_results=max_results_per_topic)
+    search_report = article_search.search_all_topics(topics, max_results=max_results_per_topic)
 
     processed = []
     skipped = []
@@ -46,9 +46,9 @@ def run_weekly(topics: dict = None, max_results_per_topic: int = None, dry_run: 
             continue
 
         for result in topic_result["results"]:
-            title, url = result["title"], result.get("scholar_url", "")
+            title, url = result["title"], result.get("source_url", "")
 
-            if not scholar_search.has_public_fulltext(result):
+            if not article_search.has_public_fulltext(result):
                 skipped.append({"title": title, "reason": "no public full-text link"})
                 continue
             if state.is_seen(seen, title, url):
@@ -90,10 +90,10 @@ def run_weekly(topics: dict = None, max_results_per_topic: int = None, dry_run: 
 
 def _process_article(result: dict, dry_run: bool = False) -> dict:
     title = result["title"]
-    eprint_url = result["eprint_url"]
+    pdf_url = result["pdf_url"]
     topic_area = result["topic"]
 
-    pdf_path = pdf_extract.download_pdf(eprint_url)
+    pdf_path = pdf_extract.download_pdf(pdf_url)
     try:
         extracted = pdf_extract.extract_text_and_figures(pdf_path)
     finally:
@@ -108,7 +108,7 @@ def _process_article(result: dict, dry_run: bool = False) -> dict:
         article_text=extracted["text"],
         figures=extracted["figures"],
         topic_area=topic_area,
-        scholar_meta=result,
+        source_meta=result,
         score_result=score_result,
         fact_check_result=fact_check_result,
     )

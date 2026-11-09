@@ -6,25 +6,37 @@ weekly literature-watch agent.
 import os
 
 # --- Search topics ---
-# Each entry is a Google Scholar query string. Keep these focused; scholarly
-# scrapes the public Scholar results page and broad queries return noisy hits.
+# Each entry is an OpenAlex full-text search query (plain keywords -- the
+# API does its own relevance ranking; no quoting/boolean syntax needed).
 SEARCH_TOPICS = {
-    "AAM": "\"advanced air mobility\"",
-    "UAM": "\"urban air mobility\"",
+    "AAM": "advanced air mobility",
+    "UAM": "urban air mobility",
     "eVTOL": "eVTOL aircraft",
-    "electric_aircraft": "\"electric aircraft\" propulsion",
-    "vertiports": "vertiport design OR operations",
-    "ai_in_aviation": "\"artificial intelligence\" aviation safety OR operations",
+    "electric_aircraft": "electric aircraft propulsion",
+    "vertiports": "vertiport design operations",
+    "ai_in_aviation": "artificial intelligence aviation safety",
 }
 
-# Only keep results published within this many days of the run (best-effort;
-# Scholar's own metadata is coarse, so this is applied on a best-effort basis
-# using the publication year plus the date-sorted search order).
+# Only keep results published within this many days of the run. Enforced
+# directly via OpenAlex's from_publication_date filter (a real filter, not
+# a best-effort approximation).
 LOOKBACK_DAYS = 10
 
-# Max results to inspect per topic per run (keeps runs fast and reduces the
-# chance of Scholar rate-limiting/CAPTCHA-blocking the run).
+# Max results to inspect per topic per run (keeps runs fast and limits how
+# much of the shared anonymous rate budget a single run consumes).
 MAX_RESULTS_PER_TOPIC = 10
+
+# --- OpenAlex search backend (agents/article_search.py) ---
+# Both optional. OPENALEX_MAILTO opts into OpenAlex's "polite pool" for
+# better reliability -- this is a courtesy query param, not an account, so
+# it's fine to use a contact address here, but it's still sent to a
+# third-party service on every request: leave it unset unless you want
+# that, and never default it to someone's personal email without asking.
+# OPENALEX_API_KEY is a free personal key for a dedicated rate budget
+# instead of sharing the lowest-priority anonymous tier with everyone else
+# hitting the API (https://docs.openalex.org/how-to-use-the-api/api-overview#api-key).
+OPENALEX_MAILTO = os.environ.get("OPENALEX_MAILTO", "")
+OPENALEX_API_KEY = os.environ.get("OPENALEX_API_KEY", "")
 
 # --- LLM config ---
 DEFAULT_LLM_MODEL = "claude-sonnet-4-6"

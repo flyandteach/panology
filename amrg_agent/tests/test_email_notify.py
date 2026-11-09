@@ -37,9 +37,9 @@ def test_subject_and_body_list_processed_articles():
 
 
 def test_body_flags_blocked_topics():
-    report = _report(search_report={"UAM": {"count": 0, "blocked": True, "error": "captcha"}})
+    report = _report(search_report={"UAM": {"count": 0, "blocked": True, "error": "rate limited"}})
     _, body = email_notify.build_digest(report)
-    assert "BLOCKED" in body
+    assert "UNAVAILABLE" in body
 
 
 def test_body_lists_errors():

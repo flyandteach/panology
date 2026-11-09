@@ -47,7 +47,7 @@ def build_digest(report: dict) -> tuple:
 
     lines.append("Search coverage by topic:")
     for topic, info in search_report.items():
-        status = "BLOCKED (Scholar likely rate-limited this run)" if info.get("blocked") else "ok"
+        status = "UNAVAILABLE (OpenAlex rate-limited this run)" if info.get("blocked") else "ok"
         lines.append(f"- {topic}: {info.get('count', 0)} hit(s) -- {status}")
     lines.append("")
 
@@ -64,10 +64,11 @@ def build_digest(report: dict) -> tuple:
         lines.append("")
 
     lines.append(
-        "Reminder: Google Scholar scraping is best-effort and has no official API, so a "
-        "blocked topic above just means try again next week. Fact-check coverage is "
-        "heuristic (Crossref reference lookup + LLM claim-plausibility check) -- "
-        "plagiarism-overlap and AI-authorship detection are intentionally not included."
+        "Reminder: full-text availability above is OpenAlex's own open-access flag, not a "
+        "scraped link, but an unavailable topic above just means OpenAlex rate-limited this "
+        "run -- try again next week. Fact-check coverage is heuristic (Crossref reference "
+        "lookup + LLM claim-plausibility check) -- plagiarism-overlap and AI-authorship "
+        "detection are intentionally not included."
     )
 
     return subject, "\n".join(lines)

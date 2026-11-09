@@ -22,7 +22,7 @@ RECOMMENDATION_LIBRARY = {
 }
 
 
-def _build_prompt(article_text: str, figures: list, topic_area: str, scholar_meta: dict) -> str:
+def _build_prompt(article_text: str, figures: list, topic_area: str, source_meta: dict) -> str:
     template_path = os.path.join(config.PROMPTS_DIR, "amrg_template.md")
     with open(template_path, "r", encoding="utf-8") as fh:
         template = fh.read()
@@ -33,13 +33,14 @@ def _build_prompt(article_text: str, figures: list, topic_area: str, scholar_met
         for i, f in enumerate(figures)
     ) or "(no extractable figures found in this PDF)"
 
-    scholar_block = (
-        f"- Scholar-listed title: {scholar_meta.get('title', 'n/a')}\n"
-        f"- Scholar-listed authors: {', '.join(scholar_meta.get('authors', [])) or 'n/a'}\n"
-        f"- Scholar-listed venue: {scholar_meta.get('venue', 'n/a')}\n"
-        f"- Scholar-listed year: {scholar_meta.get('pub_year', 'n/a')}\n"
-        f"- Scholar URL: {scholar_meta.get('scholar_url', 'n/a')}\n"
-        f"- Full-text URL: {scholar_meta.get('eprint_url', 'n/a')}"
+    source_block = (
+        f"- Source-listed title: {source_meta.get('title', 'n/a')}\n"
+        f"- Source-listed authors (with any known affiliations): "
+        f"{', '.join(source_meta.get('authors', [])) or 'n/a'}\n"
+        f"- Source-listed venue: {source_meta.get('venue', 'n/a')}\n"
+        f"- Source-listed year: {source_meta.get('pub_year', 'n/a')}\n"
+        f"- Source URL: {source_meta.get('source_url', 'n/a')}\n"
+        f"- Full-text URL: {source_meta.get('pdf_url', 'n/a')}"
     )
 
     prompt = template
@@ -48,7 +49,7 @@ def _build_prompt(article_text: str, figures: list, topic_area: str, scholar_met
     # truncated rather than dropped.
     prompt = prompt.replace("{ARTICLE_TEXT}", article_text[:60000])
     prompt = prompt.replace("{FIGURE_LIST}", figure_list)
-    prompt = prompt.replace("{SCHOLAR_METADATA}", scholar_block)
+    prompt = prompt.replace("{SOURCE_METADATA}", source_block)
     return prompt
 
 
@@ -118,9 +119,9 @@ def _format_fact_check_section(fact_check_result: dict) -> str:
 
 
 def summarize_article(article_text: str, figures: list, topic_area: str,
-                       scholar_meta: dict, score_result: dict, fact_check_result: dict) -> str:
+                       source_meta: dict, score_result: dict, fact_check_result: dict) -> str:
     """Produce the complete AMRG markdown document for one article."""
-    prompt = _build_prompt(article_text, figures, topic_area, scholar_meta)
+    prompt = _build_prompt(article_text, figures, topic_area, source_meta)
     mock = (
         "## What?\n(mock -- no LLM configured)\n\n"
         "## Who?\n(mock)\n\n## Where?\n*(mock)*\n\n## Summary\n(mock)\n\n"

@@ -16,13 +16,13 @@ class DownloadError(Exception):
     pass
 
 
-def download_pdf(eprint_url: str, dest_dir: str = None) -> str:
-    """Download a PDF from a Scholar eprint_url. Returns the local file path.
+def download_pdf(pdf_url: str, dest_dir: str = None) -> str:
+    """Download a PDF from a full-text URL. Returns the local file path.
 
-    Not every eprint_url points straight at a PDF -- some point at an HTML
-    landing page that itself links to a PDF. This handles the common case
-    (direct PDF) and raises DownloadError otherwise, so the caller can skip
-    the article rather than store garbage.
+    Not every full-text URL points straight at a PDF -- some point at an
+    HTML landing page that itself links to a PDF. This handles the common
+    case (direct PDF) and raises DownloadError otherwise, so the caller can
+    skip the article rather than store garbage.
     """
     dest_dir = dest_dir or config.DOWNLOADS_DIR
     os.makedirs(dest_dir, exist_ok=True)
@@ -30,17 +30,17 @@ def download_pdf(eprint_url: str, dest_dir: str = None) -> str:
     headers = {"User-Agent": config.USER_AGENT}
     try:
         resp = requests.get(
-            eprint_url, headers=headers, timeout=config.REQUEST_TIMEOUT, stream=True
+            pdf_url, headers=headers, timeout=config.REQUEST_TIMEOUT, stream=True
         )
         resp.raise_for_status()
     except requests.RequestException as e:
-        raise DownloadError(f"Failed to fetch {eprint_url}: {e}") from e
+        raise DownloadError(f"Failed to fetch {pdf_url}: {e}") from e
 
     content_type = resp.headers.get("Content-Type", "")
-    looks_like_pdf = "pdf" in content_type.lower() or eprint_url.lower().endswith(".pdf")
+    looks_like_pdf = "pdf" in content_type.lower() or pdf_url.lower().endswith(".pdf")
     if not looks_like_pdf:
         raise DownloadError(
-            f"{eprint_url} did not return a PDF (Content-Type: {content_type!r}); "
+            f"{pdf_url} did not return a PDF (Content-Type: {content_type!r}); "
             "likely an HTML landing page, skipping."
         )
 
@@ -52,7 +52,7 @@ def download_pdf(eprint_url: str, dest_dir: str = None) -> str:
 
     if os.path.getsize(path) < 2048:
         os.remove(path)
-        raise DownloadError(f"{eprint_url} returned a suspiciously small file; skipping.")
+        raise DownloadError(f"{pdf_url} returned a suspiciously small file; skipping.")
 
     return path
 
