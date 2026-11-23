@@ -1,7 +1,7 @@
 {
-  "registryDate": "2026-11-13",
+  "registryDate": "2026-11-20",
   "source": "https://registry.faa.gov/database/ReleasableAircraft.zip",
-  "downloadedAt": "2026-11-16T23:10:19.989902+00:00",
+  "downloadedAt": "2026-11-23T14:06:16.047580+00:00",
   "fleet": [
     {
       "registration": "N301AX",
@@ -108,7 +108,7 @@
       "year": "2025",
       "statusCode": "V",
       "icao24": "a2599d",
-      "certification": "41",
+      "certification": "41356",
       "aircraftTypeCode": "5",
       "engineTypeCode": "10",
       "registrationState": "VT",
