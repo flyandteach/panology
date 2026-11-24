@@ -8,7 +8,7 @@
         "status_code": "HLD-Eval"
       }
     ],
-    "last_checked": "2026-11-17T21:59:18Z",
+    "last_checked": "2026-11-24T14:05:49Z",
     "status_code": "HLD-Eval"
   },
   "2026-ANM-1841-OE": {
@@ -20,11 +20,11 @@
         "status_code": "HLD-Eval"
       }
     ],
-    "last_checked": "2026-11-17T21:59:18Z",
+    "last_checked": "2026-11-24T14:05:49Z",
     "status_code": "HLD-Eval"
   },
   "2026-ANM-456-OE": {
-    "consecutive_failures": 0,
+    "consecutive_failures": 1,
     "display_status": "Pending (NPF)",
     "history": [
       {
@@ -32,11 +32,12 @@
         "status_code": "NPF"
       }
     ],
-    "last_checked": "2026-11-17T21:59:17Z",
+    "last_checked": "2026-11-24T14:05:48Z",
+    "last_error": "could not find a <statusCode> element in the response (the FAA endpoint may have changed format)",
     "status_code": "NPF"
   },
   "2026-ANM-457-OE": {
-    "consecutive_failures": 0,
+    "consecutive_failures": 1,
     "display_status": "Pending (NPF)",
     "history": [
       {
@@ -44,7 +45,8 @@
         "status_code": "NPF"
       }
     ],
-    "last_checked": "2026-11-17T21:59:17Z",
+    "last_checked": "2026-11-24T14:05:49Z",
+    "last_error": "could not find a <statusCode> element in the response (the FAA endpoint may have changed format)",
     "status_code": "NPF"
   }
 }
